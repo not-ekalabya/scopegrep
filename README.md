@@ -8,8 +8,8 @@ configured", "what handles session invalidation" — against a codebase, and
 returns the parts of the code most relevant to that question, along with a
 short note on where else in the codebase those same parts are used.
 
-This project is under active development as part of an ISEF research
-submission. The pilot program below is how it's being validated on real
+This project is under active development as part of a research project.
+The pilot program below is how it's being validated on real
 codebases; the retrieval method itself, the model behind it, and the full
 result set are part of the submitted research materials rather than this
 public repository — what follows is the headline numbers, stated with their
