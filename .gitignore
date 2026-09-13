@@ -1,0 +1,9 @@
+.scopegrep_token
+__pycache__/
+*.pyc
+
+# pip package build artifacts
+dist/
+build/
+*.egg-info/
+.venv/

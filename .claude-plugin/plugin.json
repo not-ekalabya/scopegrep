@@ -1,0 +1,33 @@
+{
+  "name": "scopegrep",
+  "version": "0.3.0",
+  "description": "Attention-scored context retrieval. Ranks every chunk of a declared repo scope against your query under one global softmax on a Qwen3.5-9B GPU service, and returns whole evidence items within a token budget. For behaviour-to-code questions grep cannot express.",
+  "author": {
+    "name": "Ekalabya Ghosh",
+    "email": "ekalabya2010@gmail.com"
+  },
+  "keywords": [
+    "retrieval",
+    "context",
+    "search",
+    "attention",
+    "modal",
+    "gpu"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scopegrep-nudge.sh\"",
+            "timeout": 5,
+            "statusMessage": "Checking scopegrep applicability..."
+          }
+        ]
+      }
+    ]
+  }
+}

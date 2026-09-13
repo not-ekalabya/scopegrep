@@ -1,0 +1,48 @@
+{
+  "name": "scopegrep",
+  "version": "0.3.0",
+  "description": "Attention-scored semantic repository retrieval with a local MCP server and a scale-to-zero GPU ranker.",
+  "author": {
+    "name": "Ekalabya Ghosh",
+    "email": "ekalabya2010@gmail.com"
+  },
+  "keywords": [
+    "retrieval",
+    "context",
+    "search",
+    "attention",
+    "modal",
+    "gpu"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scopegrep-nudge.sh\"",
+            "timeout": 5,
+            "statusMessage": "Checking scopegrep applicability..."
+          }
+        ]
+      }
+    ]
+  },
+  "interface": {
+    "displayName": "Scopegrep",
+    "shortDescription": "Semantic repository retrieval",
+    "longDescription": "Ranks repository chunks against natural-language questions to find relevant implementation context beyond exact keyword search.",
+    "developerName": "Ekalabya Ghosh",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read"
+    ],
+    "defaultPrompt": [
+      "Find the code that owns this behavior",
+      "Locate the likely cause of this failing test"
+    ],
+    "brandColor": "#2563EB"
+  }
+}
