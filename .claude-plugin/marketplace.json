@@ -1,5 +1,5 @@
 {
-  "name": "scopegrep-local",
+  "name": "scopegrep",
   "owner": {
     "name": "Ekalabya Ghosh",
     "email": "ekalabya2010@gmail.com"
@@ -11,5 +11,5 @@
       "description": "Attention-scored context retrieval over a declared repo scope, served by a scale-to-zero Qwen3.5-9B Modal GPU app."
     }
   ],
-  "description": "Local marketplace hosting scopegrep, the attention-scored repository retrieval plugin."
+  "description": "Marketplace hosting scopegrep, the attention-scored repository retrieval plugin, from its GitHub repo."
 }
