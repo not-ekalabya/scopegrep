@@ -7,6 +7,22 @@ the code, not by reading the diff. The measurements and the frozen pre-fix
 copies live in the research repo at
 `decoding/experiments/product_fixes_20260906/`.
 
+## 0.3.1 — 2026-09-13
+
+Verified `claude plugin marketplace add not-ekalabya/scopegrep` +
+`claude plugin install scopegrep@scopegrep` and `pip install
+git+https://github.com/not-ekalabya/scopegrep.git` both work directly
+against the pushed repo -- no local clone needed for either. The marketplace
+manifest's own name was still `scopegrep-local`, left over from before the
+repo was git-hosted; fixed to `scopegrep`, since the old name made the
+`plugin@marketplace` id `scopegrep@scopegrep-local` rather than the
+`scopegrep@scopegrep` documented in the README.
+
+README now sends pilot requests to a real inbox instead of assuming the
+token: no self-serve signup, one shared access code sent by hand. Rotated
+the deployed `SCOPEGREP_TOKEN` (the old value is not reused anywhere and no
+longer authenticates).
+
 ## 0.3.0 — 2026-09-13
 
 Renamed `gistgrep` -> `scopegrep` (package, plugin, tool names, env vars,

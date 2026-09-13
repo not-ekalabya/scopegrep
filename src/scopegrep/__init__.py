@@ -9,4 +9,4 @@ found on PATH without depending on the plugin's on-the-fly `uv run` dependency
 resolution.
 """
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"

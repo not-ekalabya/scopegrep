@@ -1,6 +1,6 @@
 {
   "name": "scopegrep",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Attention-scored semantic repository retrieval with a local MCP server and a scale-to-zero GPU ranker.",
   "author": {
     "name": "Ekalabya Ghosh",

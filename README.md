@@ -72,35 +72,40 @@ lives in the separate `scopegrep-server` repo.
 
 ## Setup
 
-### 1. Get the URL and token
+### 1. Get a pilot access code
 
-If you're a pilot tester: you were given both directly. Skip to step 2.
+**Email [ekalabya2010@gmail.com](mailto:ekalabya2010@gmail.com) to request
+one.** Pilot testing is by invitation right now — there is no self-serve
+signup and no per-user database (see `scopegrep-server`'s README for why);
+every tester authenticates with the same shared code, sent by hand.
 
-If you're deploying your own service: see `scopegrep-server`'s README. In
-short, `modal secret create scopegrep-auth SCOPEGREP_TOKEN="$TOKEN"` then
-`modal deploy app.py` from that repo, on a profile with GPU quota.
+If you're deploying your own service instead of using the hosted one: see
+`scopegrep-server`'s README. In short, `modal secret create scopegrep-auth
+SCOPEGREP_TOKEN="$TOKEN"` then `modal deploy app.py` from that repo, on a
+profile with GPU quota.
 
 ### 2. Point the plugin at it
 
 ```bash
-export SCOPEGREP_URL='https://<workspace>--scopegrep-scopegrep-web.modal.run'
-export SCOPEGREP_TOKEN='<the token you were given>'
+export SCOPEGREP_URL='https://gekalabya2010--scopegrep-scopegrep-web.modal.run'
+export SCOPEGREP_TOKEN='<the code you were given>'
 ```
 
-`.mcp.json` reads both from the environment, so the token is never written
+`.mcp.json` reads both from the environment, so the code is never written
 into the plugin. (`SCOPEGREP_TOKEN` also falls back to
 `~/.config/scopegrep/token` or a `.scopegrep_token` file at this repo's root,
 for a persistent local setup — never commit either; both are gitignored.)
 
-### 3. Install
+### 3. Install, straight from GitHub — no local clone needed
 
-Two ways to run this, same code either way:
+Two ways to run this, same code either way, both verified against this repo
+as pushed:
 
-**As a Claude Code plugin**, straight from this repo directory (no PyPI
-publish needed for this):
+**As a Claude Code plugin:**
 
 ```bash
-claude plugin install /path/to/scopegrep
+claude plugin marketplace add not-ekalabya/scopegrep
+claude plugin install scopegrep@scopegrep
 ```
 
 Then `/mcp` should list `scopegrep` with four tools: `scopegrep_status`,
@@ -109,14 +114,19 @@ Then `/mcp` should list `scopegrep` with four tools: `scopegrep_status`,
 httpx`, which resolves those two dependencies on the fly — no `pip install`
 required for the plugin path.
 
+(A local clone still works too: `claude plugin install /path/to/scopegrep`.)
+
 **As a Python package**, if you want `scopegrep-server` / `scopegrep-prewarm`
 on your `PATH` independent of the plugin:
 
 ```bash
-pip install -e /path/to/scopegrep
+pip install git+https://github.com/not-ekalabya/scopegrep.git
 ```
 
-Both paths run the identical `src/scopegrep/server.py` file.
+Or from a local clone: `pip install -e /path/to/scopegrep`.
+
+Both installation methods, both ways, run the identical
+`src/scopegrep/server.py` file.
 
 ### 4. Check it end to end
 
