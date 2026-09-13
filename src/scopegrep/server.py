@@ -109,7 +109,7 @@ BOUNDARY = re.compile(
     r"|protected |func |fn |package |module |@|#\[|///|/\*\*)"
 )
 
-mcp = _Server("scopegrep", version="0.3.2")
+mcp = _Server("scopegrep", version="0.3.4")
 _scope_cache = {}          # local_key -> {"chunks","meta","scope_key","built_at"}
 
 

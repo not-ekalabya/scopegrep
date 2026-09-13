@@ -1,6 +1,6 @@
 {
   "name": "scopegrep",
-  "version": "0.3.2",
+  "version": "0.3.4",
   "description": "Semantic code search for coding agents: describe the behavior, get back the relevant code and its call sites.",
   "author": {
     "name": "Ekalabya Ghosh",
@@ -23,7 +23,7 @@
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scopegrep-nudge.sh\"",
             "timeout": 5,
-            "statusMessage": "Checking scopegrep applicability..."
+            "statusMessage": "Loading scopegrep..."
           }
         ]
       }

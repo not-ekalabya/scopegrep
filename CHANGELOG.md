@@ -2,6 +2,24 @@
 
 User-visible changes to the scopegrep plugin. Dates are Asia/Kolkata (IST).
 
+## 0.3.4 — 2026-09-13
+
+- The `UserPromptSubmit` hook now fires on every prompt instead of only ones
+  shaped like a symptom/behavior question — the agent gets a reminder that
+  scopegrep and its skill exist on every turn, not just when the hook's own
+  heuristic recognized the prompt as a fit.
+- README's accuracy figure restated as test-case pass rate (96% vs 85%,
+  63 vs 27 test cases), matching how it's tracked internally.
+
+## 0.3.3 — 2026-09-13
+
+- README: added a "Results so far" section — the headline cost and accuracy
+  numbers, stated with real sample sizes, plus an explanation of why input
+  tokens dominate an agent's cost. Still no retrieval method, model, or
+  infrastructure details, and no full result set.
+- Added `docs/PYTHON_MODULE.md`: package layout, console scripts, env vars,
+  and how to run the server or pre-warm helper outside a Claude Code session.
+
 ## 0.3.2 — 2026-09-13
 
 - README rewritten as a plain product page: what this does, how to get
