@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scopegrep"
-version = "0.3.1"
-description = "Attention-scored context retrieval over a declared repo scope, served by a scale-to-zero Qwen3.5-9B Modal GPU app."
+version = "0.3.2"
+description = "Semantic code search for coding agents: describe the behavior, get back the relevant code and its call sites."
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "Ekalabya Ghosh", email = "ekalabya2010@gmail.com" }]
 requires-python = ">=3.10"
-keywords = ["retrieval", "context", "search", "attention", "mcp", "modal", "gpu"]
+keywords = ["retrieval", "context", "search", "code-search", "mcp"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",

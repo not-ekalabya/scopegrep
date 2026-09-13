@@ -8,8 +8,8 @@
     {
       "name": "scopegrep",
       "source": "./",
-      "description": "Attention-scored context retrieval over a declared repo scope, served by a scale-to-zero Qwen3.5-9B Modal GPU app."
+      "description": "Semantic code search for coding agents: describe the behavior, get back the relevant code and its call sites."
     }
   ],
-  "description": "Marketplace hosting scopegrep, the attention-scored repository retrieval plugin, from its GitHub repo."
+  "description": "Marketplace hosting scopegrep, a semantic code search plugin, from its GitHub repo."
 }

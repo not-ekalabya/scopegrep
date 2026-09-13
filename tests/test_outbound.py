@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tests for the outbound completeness block.
 
-Run: python3 tests/test_outbound.py      (no pytest, no network, no GPU)
+Run: python3 tests/test_outbound.py      (no pytest, no network, no hosted service)
 
 Why these exist at all: `_repo_callers` shells out to `git grep`, so its output
 is shaped by whatever repository it is pointed at. Nothing else in this server

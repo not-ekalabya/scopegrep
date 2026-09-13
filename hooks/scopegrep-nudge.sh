@@ -8,9 +8,9 @@
 # of this hook implemented only half of it, forcing retrieval onto questions
 # grep answers for free.
 #
-# When it does fire it also warms the scale-to-zero GPU container in the
-# background, so the ~73s cold start overlaps the model's own thinking instead
-# of landing on the critical path at retrieve time.
+# When it does fire it also warms the service in the background, so its cold
+# start overlaps the model's own thinking instead of landing on the critical
+# path at retrieve time.
 set -euo pipefail
 
 input="$(cat)"
@@ -35,7 +35,7 @@ if ! printf '%s' "$prompt" | grep -Eiq "$pattern"; then
 fi
 
 # --- routing note; no prewarm on the prompt path ----------------------------
-# The old hook warmed the GPU here on every symptom-shaped prompt, including
+# The old hook warmed the service here on every symptom-shaped prompt, including
 # the many that never retrieve. Warming is a cost decision that belongs to the
 # call that needs it, not to prompt submission, so routing happens first and
 # the container stays cold until something actually queries it.

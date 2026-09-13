@@ -1,4 +1,4 @@
-"""scopegrep -- attention-scored context retrieval over a declared repo scope.
+"""scopegrep -- semantic code search over a declared repo scope.
 
 The MCP server lives in `scopegrep.server`; the client pre-warm helper lives
 in `scopegrep.prewarm`. Neither is meant to be imported for its functions --
@@ -9,4 +9,4 @@ found on PATH without depending on the plugin's on-the-fly `uv run` dependency
 resolution.
 """
 
-__version__ = "0.3.1"
+__version__ = "0.3.2"

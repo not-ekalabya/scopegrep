@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# Force the scoring service to load its model before anybody is waiting on it.
+# Force the scoring service to finish starting up before anybody is waiting on it.
 #
-# The service scales to zero. /health is served from inside the GPU class, so
-# calling it starts a container and runs the 9B model load -- measured at
-# 71-117s in the benchmark transcripts. That cost is paid by whoever queries
-# first. On your own machine that is an annoyance; in front of a pilot partner
-# it is the first thing they see, and it is not what the tool costs in steady
-# state.
+# The service goes idle after a period of no use, so calling /health after
+# that starts it back up -- a couple of minutes in practice. That cost is
+# paid by whoever queries first. On your own machine that is an annoyance;
+# in front of a pilot partner it is the first thing they see, and it is not
+# what the tool costs in steady state.
 #
 # Run this at the start of a session, or on a timer during a pilot window.
 #

@@ -1,7 +1,7 @@
 {
   "name": "scopegrep",
-  "version": "0.3.1",
-  "description": "Attention-scored context retrieval. Ranks every chunk of a declared repo scope against your query under one global softmax on a Qwen3.5-9B GPU service, and returns whole evidence items within a token budget. For behaviour-to-code questions grep cannot express.",
+  "version": "0.3.2",
+  "description": "Semantic code search for coding agents: describe the behavior, get back the relevant code and its call sites.",
   "author": {
     "name": "Ekalabya Ghosh",
     "email": "ekalabya2010@gmail.com"
@@ -10,9 +10,8 @@
     "retrieval",
     "context",
     "search",
-    "attention",
-    "modal",
-    "gpu"
+    "code-search",
+    "mcp"
   ],
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",

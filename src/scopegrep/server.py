@@ -1,25 +1,24 @@
-"""scopegrep MCP server -- attention-scored context retrieval over a declared
-scope of the working repository.
+"""scopegrep MCP server -- semantic context retrieval over a declared scope
+of the working repository.
 
 The agent declares a SCOPE (glob patterns), a QUERY, and a token budget. This
-process reads the matching files, cuts them into path-headed chunks in the same
-shape the retrieval numbers were measured on, ships them to a Modal GPU service
-running the `two_pass_g32` scorer, and returns as many whole ranked chunks as
+process reads the matching files, cuts them into path-headed chunks, ships
+them to a hosted scoring service, and returns as many whole ranked chunks as
 the budget allows.
 
 Everything expensive is on the other side of the network; everything here is
 file walking, chunking, and caching. Chunks are cached in-process keyed by
 (scope spec + chunker version + a content hash of every in-scope file), so a
-second query against an UNCHANGED scope sends a 32-byte scope_key instead of
-200k tokens of source and the service answers it off a warm KV cache -- while
+second query against an UNCHANGED scope sends a short scope_key instead of
+the whole source and the service answers it from its own warm cache -- while
 an edit that preserves a file's size and mtime still invalidates the entry.
 
 The response is governed by `budget_tokens`, not by k: evidence items are
 included whole or not at all, and anything dropped is reported by location.
 
 Configuration:
-  SCOPEGREP_URL    base URL of the deployed Modal service. Defaults to the
-                  endpoint `modal deploy` produced for this plugin.
+  SCOPEGREP_URL    base URL of the hosted scoring service. Defaults to the
+                  endpoint deployed for this plugin.
   SCOPEGREP_TOKEN  shared secret, sent as X-Scopegrep-Token. Falls back to
                   ~/.config/scopegrep/token, then to .scopegrep_token in the
                   plugin root -- so the secret never has to live in a shell
@@ -69,18 +68,17 @@ URL = (os.environ.get("SCOPEGREP_URL") or DEFAULT_URL).rstrip("/")
 TOKEN = _read_token()
 ROOT = os.path.abspath(os.environ.get("SCOPEGREP_ROOT") or os.getcwd())
 
-# The benchmarked chunk shape: "# File: <relpath>\n" + the file's first 1500
-# characters, one chunk per file. Every number in the skill's guidance table
-# was measured on chunks of this size (mean 1266 chars / 337 tokens).
+# The chunk shape: "# File: <relpath>\n" + the file's first 1500 characters,
+# one chunk per file. The skill's guidance is calibrated to chunks of this size.
 CHUNK_CHARS = 1500
-CHARS_PER_TOKEN = 3.75      # measured on the benchmark corpora, code + JSON
+CHARS_PER_TOKEN = 3.75      # rough estimate for code + JSON payloads
 MAX_CHUNKS = 2000           # service-side hard cap
-SAFE_CHUNKS = 1200          # largest benchmarked scope; refuse above this
-HTTP_TIMEOUT = 900.0        # a cold container has to load a 9B model first
-# Modal answers a request that outruns its synchronous window (~150s, which a
-# cold 9B model load does) with a 303 pointing at a polling URL, so every call
-# here follows redirects. Without it the first request of a cold session
-# returns an unhelpful "HTTP 303" instead of the result.
+SAFE_CHUNKS = 1200          # largest scope this has been exercised against; refuse above this
+HTTP_TIMEOUT = 900.0        # a cold service instance can take a while to become ready
+# A request that outruns the service's synchronous response window gets a
+# redirect to a polling URL instead of an immediate answer, so every call
+# here follows redirects. Without it, the first request of a cold session
+# returns an unhelpful early response instead of the result.
 
 DEFAULT_EXCLUDES = [
     "**/.git/**", "**/.hg/**", "**/.svn/**", "**/node_modules/**",
@@ -111,7 +109,7 @@ BOUNDARY = re.compile(
     r"|protected |func |fn |package |module |@|#\[|///|/\*\*)"
 )
 
-mcp = _Server("scopegrep", version="0.3.1")
+mcp = _Server("scopegrep", version="0.3.2")
 _scope_cache = {}          # local_key -> {"chunks","meta","scope_key","built_at"}
 
 
@@ -260,7 +258,7 @@ class _Ignore:
 
 
 # Dotfiles that carry credentials rather than source. A retrieval tool that
-# ships these to a GPU service, or quotes them back into a transcript, has
+# ships these off-machine, or quotes them back into a transcript, has
 # exfiltrated them; being inside the declared root is not consent.
 SENSITIVE_NAMES = {
     ".env", ".envrc", ".netrc", ".npmrc", ".pypirc", ".dockercfg",
@@ -421,9 +419,8 @@ def _enclosing_symbol(lines, start):
     like `current = current()` with its `def` twenty lines above the cut. The
     path alone does not tell the reader -- model or human -- which function
     they are looking at, and a chunk that cannot identify itself loses to a
-    neighbour that opens on a clean `def`. Measured: the correct chunk was
-    returned at rank #1 and passed over for a worse chunk at #8 whose first
-    line was `def render(self, context):`.
+    neighbour that opens on a clean `def`, even when the unlabeled chunk was
+    the actually correct answer.
 
     Scans backwards for the nearest definition at a shallower indent than the
     window's own first line, then for an enclosing class above that."""
@@ -454,20 +451,20 @@ def build_chunks(include, exclude, split="window", chunk_chars=CHUNK_CHARS,
                  root=ROOT, max_chunks=MAX_CHUNKS):
     """Return (chunks, meta, truncated_note).
 
-    `split="head"` is the benchmarked shape exactly: one chunk per file, the
+    `split="head"` is the best-exercised shape: one chunk per file, the
     file's first `chunk_chars` characters, nothing else. Content past that
     point is not retrievable, because the scorer never sees it.
 
     `split="window"` covers whole files by cutting them into windows of about
-    `chunk_chars`. Strictly more of the repo becomes reachable, and each
-    window's own head and tail feed stage 1 -- but this shape was NOT what
-    the recall numbers were measured on, so treat them as guidance rather
-    than a promise here.
+    `chunk_chars`. Strictly more of the repo becomes reachable this way, but
+    it is a less-exercised code path than symbol-split scoping, so treat its
+    ranking quality as guidance rather than a promise.
 
     Either way every chunk opens with "# File: <relpath>" (plus the line range
-    in window mode). That header is not decoration: stage 1 sees only a
-    32-token head+tail gist of each chunk, so the path is most of what it has
-    to rank on, and dropping the header measurably blinds it."""
+    in window mode). That header is not decoration: the scorer only sees a
+    short summary of each chunk in its first pass, so the path is most of
+    what it has to rank on, and dropping the header measurably hurts
+    ranking quality."""
     files, coverage = _walk(root, include, exclude)
     chunks, meta = [], []
     for rel, full, size, mtime in files:
@@ -517,13 +514,11 @@ CHUNKER_VERSION = "window-v2-2026-09-06"
 def _content_revision(full, size):
     """SHA-256 of the file's bytes, not its (size, mtime) metadata.
 
-    The defect this replaces is recorded in the product audit as
-    ``same_size_restored_mtime_edit: {cache_hit: true, stale_body_returned:
-    true}``. A same-length edit with the mtime restored -- what `git stash`,
+    A same-length edit with the mtime restored -- what `git stash`,
     `git checkout`, `sed -i` on an equal-width replacement, and any editor
-    that preserves timestamps all produce -- kept the cache entry valid and
-    returned the pre-edit body as current evidence. Timestamps are a fast
-    hint; the content hash is the proof.
+    that preserves timestamps all produce -- would keep a (size, mtime)-based
+    cache entry valid and return the pre-edit body as current evidence.
+    Timestamps are a fast hint; the content hash is the proof.
     """
     h = hashlib.sha256()
     try:
@@ -583,8 +578,8 @@ MAX_BUDGET_TOKENS = 16000
 
 
 def _est_tokens(text):
-    """Client-side token estimate. No tokenizer is available in this process;
-    3.75 chars/token was measured on the benchmark corpora. Reported as an
+    """Client-side token estimate. No tokenizer is available in this process,
+    so a fixed chars-per-token ratio stands in for one. Reported as an
     estimate everywhere it is surfaced, never as a count."""
     return int(len(text) / CHARS_PER_TOKEN)
 
@@ -597,11 +592,10 @@ def _recommend_budget(n_chunks, mean_tokens):
     It also recommended k without reference to what k costs, which is the
     quantity the caller is actually spending.
 
-    The numbers below come from re-scoring the stored 2026-09-05 rankings at
-    matched serialized budgets (experiments/product_fixes_20260906): on the
-    20-query SWE set mean gold recall was 0.350 at 500 tokens, 0.550 at 1k,
-    0.750 at 2k, 0.800 at 4k and 0.850 at 12k. The knee is between 2k and 4k;
-    below 1k recall is roughly half of what the same ranking delivers at 4k.
+    The thresholds below reflect where result quality levels off as the
+    budget grows: a small scope reaches its best achievable quality with a
+    small budget, and past a few thousand tokens further budget buys very
+    little on a typical code question.
     """
     scope_tokens = int(n_chunks * mean_tokens)
     if n_chunks <= 8:
@@ -611,14 +605,12 @@ def _recommend_budget(n_chunks, mean_tokens):
                "whole scope is reasonable.")
     elif n_chunks <= 60:
         recommended = 2000
-        why = (f"{n_chunks} chunks. Measured on the 20-query SWE set, mean gold "
-               "recall was 0.750 at a 2k serialized budget and 0.800 at 4k; a "
-               "small scope reaches the same recall with fewer tokens.")
+        why = (f"{n_chunks} chunks -- a scope this size reaches good quality "
+               "with a modest budget; going much higher buys little more.")
     else:
         recommended = 4000
-        why = (f"{n_chunks} chunks. Measured on the 20-query SWE set: 0.550 mean "
-               "gold recall at 1k, 0.750 at 2k, 0.800 at 4k, 0.850 at 12k. The "
-               "knee is 2k-4k; past 4k each extra token buys very little.")
+        why = (f"{n_chunks} chunks -- quality keeps improving with budget up "
+               "to a few thousand tokens, then flattens out.")
     return {
         "recommended_budget_tokens": recommended,
         "why": why,
@@ -674,9 +666,9 @@ def _fit_to_budget(render, items, budget_tokens, omitted):
     `_pack_response` charges a FIXED reserve for the header, but the header's
     real size is not known until packing is done: the omitted-items line, the
     resolved-references block and the coverage note are all appended
-    afterwards. Measured on a real pandas run that under-counted the response
-    by 131 tokens (3.4%) -- inside the requested budget that time, but only by
-    luck. This turns "approximately within budget" into a guarantee.
+    afterwards, and a fixed reserve can under-count that by a small margin --
+    inside budget most of the time, but only by luck. This turns
+    "approximately within budget" into a guarantee.
 
     Order matters. Verbosity goes first, evidence last: a shorter omission
     list still reports the omission, whereas a dropped chunk is gone. A single
@@ -731,14 +723,13 @@ def _pack_response(items, budget_tokens, reserve_tokens=HEADER_RESERVE_TOKENS):
 
 @mcp.tool()
 def scopegrep_status() -> str:
-    """Check the scopegrep GPU service: is it warm, what scopes does it hold,
+    """Check the scopegrep service: is it warm, what scopes does it hold,
     how long is a cold start.
 
     Call this first if a retrieval is about to matter, or if you want to know
-    whether the next query pays a cold start. The service scales to zero, so
-    the first request after an idle period spends ~60-120s loading a 9B model
-    before it scores anything; subsequent requests against the same scope are
-    served off a warm KV cache."""
+    whether the next query pays a cold start. The service goes idle after a
+    period of no use, so the first request after that can take a while to
+    become ready; subsequent requests against the same scope are fast."""
     try:
         r = httpx.get(f"{URL}/health", timeout=HTTP_TIMEOUT, follow_redirects=True,
                       headers={"X-Scopegrep-Token": TOKEN})
@@ -749,9 +740,8 @@ def scopegrep_status() -> str:
     h = r.json()
     lines = [
         f"service:   {URL}",
-        f"model:     {h['model']} on {h['gpu']}",
-        f"container: up {h['container_uptime_seconds']}s "
-        f"(model load took {h['model_load_seconds']}s); "
+        f"instance:  up {h['container_uptime_seconds']}s "
+        f"(startup took {h['model_load_seconds']}s); "
         # A deployment held warm and one that scales to zero answer /health
         # identically apart from this field, and the difference is the whole
         # question of whether the next call blocks for a minute or two.
@@ -762,10 +752,10 @@ def scopegrep_status() -> str:
     ]
     for s in h["cached_scopes"] or []:
         lines.append(f"  {s['scope_key']}  {s['n_chunks']} chunks, "
-                     f"g{s['gist_tokens']}, {s['prefix_tokens']} gist tokens "
-                     f"prefilled, {s['n_probes']} queries served")
+                     f"{s['prefix_tokens']} tokens preprocessed, "
+                     f"{s['n_probes']} queries served")
     if not h["cached_scopes"]:
-        lines.append("  (none -- the next retrieval pays the stage-1 prefill)")
+        lines.append("  (none -- the next retrieval pays the first-time setup cost)")
     lines.append(f"local scope cache: {len(_scope_cache)} entry(ies), root={ROOT}")
     return "\n".join(lines)
 
@@ -776,14 +766,13 @@ def scopegrep_scope(include: list[str] | str | None = None,
                    split: str = "window",
                    chunk_chars: int = CHUNK_CHARS,
                    root: str | None = None) -> str:
-    """Preview a search scope WITHOUT touching the GPU: how many files and
+    """Preview a search scope WITHOUT calling the service: how many files and
     chunks it contains, roughly how many tokens, and what k to ask for.
 
     Free and instant -- it only walks the filesystem. Use it before a first
     retrieval on an unfamiliar repo, or whenever you are unsure whether a
     glob is too broad. A scope of more than ~2000 chunks is rejected by the
-    service; a scope of a few hundred chunks is the regime the retrieval
-    numbers were measured in.
+    service; a scope of a few hundred chunks is where this performs best.
 
     include: glob patterns to search, e.g. ["src/**/*.py", "*.md"]. Bare
         patterns like "*.py" match at any depth. Empty means every text file
@@ -792,11 +781,11 @@ def scopegrep_scope(include: list[str] | str | None = None,
     exclude: extra globs to skip; sensible defaults (.git, node_modules,
         build dirs, lockfiles, minified assets, binaries) always apply.
     split: "window" cuts whole files into ~chunk_chars windows (covers the
-        whole file; not the benchmarked shape). "head" keeps only each file's
-        first chunk_chars characters, which IS the benchmarked shape.
-    chunk_chars: target chunk size. 1500 is what was measured. Going much
-        below ~1000 makes the path header dominate the 32-token gist stage 1
-        ranks on, which hurts.
+        whole file; the more general shape). "head" keeps only each file's
+        first chunk_chars characters, the best-exercised shape.
+    chunk_chars: target chunk size. 1500 is the default. Going much below
+        ~1000 makes the path header dominate what a short summary of the
+        chunk can capture, which hurts ranking quality.
     """
     inc = _norm_globs(include)
     exc = DEFAULT_EXCLUDES + _norm_globs(exclude)
@@ -830,9 +819,9 @@ def scopegrep_scope(include: list[str] | str | None = None,
     if entry["note"]:
         out += ["", "WARNING: " + entry["note"]]
     if len(chunks) > 1200:
-        out.append("WARNING: this scope is larger than anything the retrieval "
-                   "was benchmarked on (589 chunks / 198k tokens). Recall past "
-                   "that size is unmeasured.")
+        out.append("WARNING: this scope is larger than what this has been "
+                   "well-exercised against. Result quality past this size "
+                   "is less certain.")
     return "\n".join(out)
 
 
@@ -848,19 +837,17 @@ def scopegrep_retrieve(query: str,
                       root: str | None = None,
                       mode: str = "codegen") -> str:
     """Retrieve the k most query-relevant chunks of a declared scope, ranked
-    by the model's own attention rather than by keyword overlap.
+    by meaning rather than by keyword overlap.
 
     USE THIS FOR SEMANTIC QUERIES -- "where is retry backoff configured",
     "which module owns session invalidation", "what handles the migration
-    rollback path". It reads the whole scope on the GPU and ranks every chunk
-    under one global softmax, so it finds code that never mentions your
-    words.
+    rollback path". It reads the whole scope and ranks every chunk together
+    in one pass, so it finds code that never mentions your words.
 
     Use it when the question is behaviour and you do not have the vocabulary:
     a symptom, an issue body, "which part decides X". If you already have a
     symbol name, an error string, or a path, Grep is faster, free, and better
-    at it -- measured on the same corpus, a path-aware grep beat this at k=1
-    (0.350 vs 0.200).
+    at it for that kind of query.
 
     One call is meant to be enough. Scope is resolved and cached internally,
     so calling scopegrep_scope first is optional -- do it when you want to see
@@ -872,11 +859,9 @@ def scopegrep_retrieve(query: str,
         genuine detail helps. This is not a keyword box.
     budget_tokens: the size of the whole response, headers included. Evidence
         items are included whole or not at all, and anything dropped is
-        reported by location so you can ask for it. Measured on the 20-query
-        SWE set by re-scoring stored rankings at matched budgets: mean gold
-        recall 0.550 at 1k, 0.750 at 2k, 0.800 at 4k, 0.850 at 12k. 3k is the
-        default; raise it for a wide scope, lower it when you only need a
-        pointer.
+        reported by location so you can ask for it. 3k is a sensible default
+        for most scopes; raise it for a wide scope, lower it when you only
+        need a pointer.
     k: optional hard cap on the number of chunks, for when you want exactly n
         locations. Leave it unset and the budget decides.
     output: "chunks" (the default) inlines each returned chunk's text -- a
@@ -884,9 +869,8 @@ def scopegrep_retrieve(query: str,
         "files" returns ranked locations only, for when you intend to read the
         files yourself.
     include/exclude/split/chunk_chars: see scopegrep_scope.
-    mode: prompt framing for the scorer. "codegen" for source code (what the
-        SWE-bench numbers used), "short" for prose, docs, schemas, or tool
-        descriptions (what the ToolBench numbers used).
+    mode: prompt framing for the scorer. "codegen" for source code, "short"
+        for prose, docs, schemas, or tool descriptions.
     """
     if not isinstance(budget_tokens, int) or isinstance(budget_tokens, bool):
         return "budget_tokens must be an integer number of tokens."
@@ -910,10 +894,10 @@ def scopegrep_retrieve(query: str,
         return (
             f"scope too wide: {len(chunks)} chunks from include="
             f"{inc or ['<everything>']} under {rt}.\n"
-            f"Only scopes up to ~{SAFE_CHUNKS} chunks are benchmarked, and the "
+            f"Scopes work best up to ~{SAFE_CHUNKS} chunks, and the "
             f"service rejects more than {MAX_CHUNKS}.\n"
             "Narrow `include` to one subsystem -- a directory of plausible "
-            "files, e.g. ['django/template/**/*.py'] rather than ['**/*.py'] -- "
+            "files, e.g. ['src/some_subsystem/**/*.py'] rather than ['**/*.py'] -- "
             "and call scopegrep_scope first to see the chunk count before you "
             "retrieve. Retrieval ranks within the scope you declare; it cannot "
             "search a scope it was never given.")
@@ -947,8 +931,8 @@ def scopegrep_retrieve(query: str,
     res = r.json()
     entry["scope_key"] = res["scope_key"]
     wall = time.time() - t0
-    gpu = (res["stage1"].get("index_build_seconds", 0) +
-           res["stage1"]["seconds"] + res["stage2"]["seconds"])
+    scoring = (res["stage1"].get("index_build_seconds", 0) +
+              res["stage1"]["seconds"] + res["stage2"]["seconds"])
 
     items = []
     for item in res["top_k"]:
@@ -956,7 +940,7 @@ def scopegrep_retrieve(query: str,
         loc = f"{m['path']}:{m['start_line']}-{m['end_line']}"
         if m.get("symbol"):
             loc += f"  (inside {m['symbol']})"
-        flag = "" if item["reranked"] else "  [stage-1 only]"
+        flag = "" if item["reranked"] else "  [preliminary rank]"
         head = f"--- #{item['rank']+1}  {loc}  rev {m.get('revision','?')[:8]}{flag}"
         text = head if output != "chunks" else head + "\n" + chunks[item["index"]] + "\n"
         items.append({"text": text, "loc": loc, "index": item["index"]})
@@ -971,9 +955,9 @@ def scopegrep_retrieve(query: str,
             f"~{_SIZE_SLOT} est. tokens "
             f"of a {budget_tokens:,} budget; scope {len(chunks)} chunks, "
             f"scored to rank {res['ranking_valid_to_k']} at full resolution",
-            f"{wall:.1f}s wall / {gpu:.1f}s scoring"
-            + ("  (the rest was a cold model load; the next query is warm)"
-               if wall - gpu > 15 else ""),
+            f"{wall:.1f}s wall / {scoring:.1f}s scoring"
+            + ("  (the rest was a cold start; the next query is fast)"
+               if wall - scoring > 15 else ""),
         ]
         if omitted_items:
             shown = [item["loc"] for item in omitted_items[:max_locs]]
@@ -986,11 +970,9 @@ def scopegrep_retrieve(query: str,
                 + " -- re-ask with a larger budget_tokens to see them.")
         # The single-call path is now the recommended one, so it has to carry
         # the dangling-reference resolver too. It used to exist only on
-        # `scopegrep_multi_retrieve`, and it is the fix that turned the measured
-        # forced-Sonnet run from wrong to correct: the answer chunk ended in
-        # `current = context.template.engine.string_if_invalid` and the
-        # deciding fact -- that it defaults to `""` -- lived in another file.
-        # Recommending a path without the resolver would reintroduce that.
+        # `scopegrep_multi_retrieve` -- recommending a path without it would
+        # reintroduce the failure that resolver exists to prevent (see
+        # `_resolve_dangling`'s docstring).
         refs = _resolve_dangling([item["index"] for item in kept_items],
                                  chunks, meta)
         if refs:
@@ -1032,7 +1014,7 @@ def scopegrep_retrieve(query: str,
 
 # --------------------------------------------------------------- bulk retrieval
 
-RRF_K = 60          # standard reciprocal-rank-fusion damping constant
+RRF_K = 60          # damping constant for combining several rankings into one
 
 # Attribute-style references worth resolving: lowercase-led (excludes Class/
 # CONST-like names, which are not the literal-default lookups this resolves),
@@ -1043,8 +1025,7 @@ RRF_K = 60          # standard reciprocal-rank-fusion damping constant
 # exclusion only works if the name is matched to its END. Without `\b`, `{4,}`
 # backtracks: on `object.append(value)` it gave up the final "d", matched
 # "appen", saw "d" rather than "(" ahead, and reported a reference to a symbol
-# that does not exist. That is the `method_reference_probe: ["appen"]` row in
-# the product audit. `\b` pins the match to the whole identifier, so
+# that does not exist. `\b` pins the match to the whole identifier, so
 # `.append(` is once again just a method call.
 _REF = re.compile(r"\.([a-z][a-zA-Z0-9_]{4,})\b(?!\s*\()")
 # `start_line`/`end_line` are this tool's own chunk-metadata field names, so
@@ -1070,15 +1051,14 @@ def _resolve_dangling(returned_idx, chunks, meta, limit=3):
     """Find literal values for symbols a returned chunk depends on but does not
     define.
 
-    The failure this fixes, measured: the correct chunk answered the question
-    with `current = context.template.engine.string_if_invalid`, but the fact
-    that `string_if_invalid` defaults to `""` lives in another file. Asked why
-    a template renders an empty string, and told to answer from the returned
-    chunks alone, the model passed over that chunk for a worse one that
-    literally contained `return ""` -- reasoning correctly from the evidence it
-    was given, which was incomplete. The definition was already inside the
-    declared scope, just not among the returned chunks, so resolve it here for
-    free rather than making the caller spend a turn on it."""
+    The failure this fixes: the right chunk can end in a reference to a
+    default or a constant whose actual value lives in another file entirely.
+    Asked to answer from the returned chunks alone, a reader can pass over
+    the genuinely correct chunk for a worse one that happens to spell out a
+    literal value -- reasoning correctly from evidence that was incomplete.
+    The definition is often already inside the declared scope, just not
+    among the specific chunks returned, so this resolves it here for free
+    rather than making the caller spend a turn on it."""
     shown = "\n".join(chunks[i] for i in returned_idx)
     names, seen = [], set()
     for m in _REF.finditer(shown):
@@ -1151,7 +1131,7 @@ _DEF_KEYWORD = (r"(?:def|class|function|func|fn|impl|struct|interface|type|"
 # of these keywords are also English words -- `type of the array` and `class
 # objects returned by` both sit in ordinary docstrings -- and a bare
 # keyword-then-word rule reported `of`, `objects`, `while` and `kwargs` as
-# defined symbols on the benchmark corpora. A definition continues with a
+# defined symbols on real codebases. A definition continues with a
 # delimiter (`(`, `{`, `:`, `=`, `<`, `[`, `;`), with end of line, or with
 # another structural keyword (`type Foo struct`, `impl Display for Foo`);
 # English prose continues with a word.
@@ -1179,14 +1159,10 @@ _OUTBOUND_SKIP = {"main", "run", "get", "set", "call", "test", "setup",
 # the ranked chunks need and tells the caller nothing they can act on.
 _OUTBOUND_MAX_SITES = 12
 _OUTBOUND_MAX_SYMBOLS = 6
-# Which corpus the caller scan reads. "scope" is the original behaviour, kept
-# as the default so the already-measured `foldp` arm is unchanged by this
-# file; "repo" greps the whole repository and is what the `foldw` arm sets.
-# The difference is measurable on the easy task: in-scope, `slice_indexer`
-# reports five call sites and all of them are under `pandas/core/indexes/`;
-# repo-wide it reports six, and the sixth is `pandas/core/indexing.py:1128` --
-# the file defining `convert_to_index_sliceable`, which `frame.py` calls at
-# the two lines the upstream fix changes.
+# Which corpus the caller scan reads. "scope" is the default and only looks
+# at the files the caller already declared; "repo" greps the whole
+# repository instead, which can surface a real caller that a narrower
+# declared scope missed entirely, at the cost of more noise.
 _OUTBOUND_REPO_WIDE = os.environ.get("SCOPEGREP_OUTBOUND_SCOPE", "scope") == "repo"
 
 
@@ -1313,22 +1289,15 @@ def _call_site_skip(name):
 def _repo_callers(names, root):
     """Every reference to `names` in the whole repository, in one `git grep`.
 
-    The scan this replaces was bounded by the retrieval's own `include`, and
-    that is what made it miss on the easy task. The fix there lives in
-    `pandas/core/frame.py`; every episode scoped retrieval to
-    `pandas/core/indexes/**/*.py`; so `frame.py` was never walked, never
-    chunked, and the one line that pointed at the answer --
+    A scan bounded by the retrieval's own declared scope can miss the actual
+    fix location entirely: if the real answer lives outside the files a
+    caller happened to include, no amount of budget makes it appear, because
+    it was never read in the first place.
 
-        convert_to_index_sliceable  -> frame.py:2921, frame.py:3069
-
-    -- could not be produced at any budget. The block instead enumerated index
-    internals nobody was going to modify, and the agent spent turns following
-    them.
-
-    Retrieval has to stay scoped: it is GPU work under a token budget. This
-    scan is `git grep`, so it does not, and a blast radius does not respect
-    the scope somebody guessed. One alternation for every symbol keeps it to a
-    single subprocess.
+    Retrieval has to stay scoped: it costs real time and money per file under
+    a token budget. This scan is `git grep`, so it does not, and a blast
+    radius does not respect the scope somebody guessed. One alternation for
+    every symbol keeps it to a single subprocess.
 
     Returns {} when the root is not a git repository, which makes the caller
     fall back to the in-scope scan rather than reporting nothing.
@@ -1363,25 +1332,24 @@ def _resolve_outbound(returned_idx, chunks, meta, root=None,
                       max_sites=_OUTBOUND_MAX_SITES):
     """Where else in scope the symbols these chunks *define* are called.
 
-    The failure this fixes, measured on pandas-groupby-dtype: the retrieval
-    arm changed `_get_data_to_aggregate`, which has five call sites, and
-    patched the one the ranking returned. The other four are bare
-    `self._get_data_to_aggregate()` calls that share no vocabulary with the
-    report, so a relevance ranker cannot surface them -- under a token budget
-    it is *right* not to, since they carry no information about the bug. The
-    episode shipped 7/9 and failed two `std` tests that reach the helper
-    through a call site it never saw.
+    The failure this fixes: an agent changes a shared helper that has several
+    call sites, and patches only the one that a relevance ranking surfaced.
+    The other call sites can share no vocabulary at all with the original
+    question, so a relevance ranker is *right* not to return them under a
+    token budget -- they carry no information about the bug being fixed. But
+    the agent still needs to know they exist before it can decide the change
+    is complete.
 
-    Completeness is a different query from relevance, and asking it in a
-    second round trip is what makes it expensive: the answer is 12-60 tokens
-    and a turn costs ~27,700 billed input tokens of re-sent context, so the
-    arm that asks it pays 460x-2300x the value of the answer. The scope is
-    already walked and chunked here, so answer it in the same response.
+    Completeness is a different question from relevance, and asking it as a
+    separate follow-up call is what makes it expensive: the answer is small,
+    but a whole additional round trip re-sends everything already in context.
+    The scope is already walked and chunked here, so this answers it in the
+    same response instead.
 
     Nothing here decides whether the task is hard. The block's *size* is what
     the repository already contains -- one line when a symbol has no callers,
-    six when it has five -- so the cheap case is cheap without anything having
-    to classify it as cheap.
+    more when it has several -- so the easy case stays cheap without anything
+    having to classify it as easy.
     """
     defined = _defined_symbols(returned_idx, chunks, meta)
     if not defined:
@@ -1431,12 +1399,12 @@ def _resolve_outbound(returned_idx, chunks, meta, root=None,
         found[name] = (sorted(def_files), outside, sites, same_file, in_tests)
 
     # Order by how decidable the answer is, not by how many sites there are.
-    # Sorting on the raw count puts the worst entries first: `Index` has 239
-    # call sites, which is a fact about the word rather than a change to make,
-    # and at six symbols per block it crowded out `_maybe_cast_slice_bound`'s
-    # six -- the only line on that block a caller could have acted on. So:
-    # symbols with an enumerable set first (most sites first among those),
-    # then the ones with nothing outside, then the floods.
+    # Sorting on the raw count puts the worst entries first: a generic name
+    # used everywhere is a fact about the word rather than a change to make,
+    # and would crowd out a more specific symbol with a small, actionable
+    # list of call sites. So: symbols with an enumerable set first (most
+    # sites first among those), then the ones with nothing outside, then
+    # the floods.
     def rank(kv):
         outside = kv[1][1]
         if 0 < outside <= max_sites:
@@ -1508,10 +1476,9 @@ def scopegrep_multi_retrieve(queries: list[str] | str,
     a behaviour AND the default that governs it, say. Paraphrases of one
     question are correlated evidence, not independent confirmation.
 
-    What fusion does and does not buy, measured: on two documents a naive
-    packaged-query RRF fell from 1.0 coverage to 0.233, and a union merely
-    recovered the saturated single-query baseline. Fusing helps when the
-    queries seek different things; it dilutes when they seek the same thing.
+    What fusion does and does not buy: it helps when the queries genuinely
+    seek different things, and it can actively dilute the result -- doing
+    worse than a single well-chosen query -- when they overlap too closely.
 
     Agreement counts are reported as COVERAGE -- how many of your queries
     ranked a chunk -- and nothing more. They are not a correctness signal: a
@@ -1590,7 +1557,7 @@ def scopegrep_multi_retrieve(queries: list[str] | str,
         loc = f"{m['path']}:{m['start_line']}-{m['end_line']}"
         if m.get("symbol"):
             loc += f"  (inside {m['symbol']})"
-        mark = "  [stage-1 only]" if not reranked_at.get(idx) else ""
+        mark = "  [preliminary rank]" if not reranked_at.get(idx) else ""
         head = (f"--- #{n}  {loc}  rev {m.get('revision','?')[:8]}  "
                 f"(ranked by {agree[idx]} of {n_q} executed queries, "
                 f"best rank {best_rank[idx]}){mark}")
@@ -1601,8 +1568,8 @@ def scopegrep_multi_retrieve(queries: list[str] | str,
 
     def _render(kept_items, omitted_items, max_locs):
         lines = [
-            f"scopegrep multi: {n_q} of {len(qs)} queries executed, fused by "
-            f"reciprocal rank fusion over {len(chunks)} chunks; "
+            f"scopegrep multi: {n_q} of {len(qs)} queries executed, fused "
+            f"over {len(chunks)} chunks; "
             f"{len(kept_items)} evidence items, "
             f"~{_SIZE_SLOT} est. "
             f"tokens of a {budget_tokens:,} budget, {wall:.1f}s wall",

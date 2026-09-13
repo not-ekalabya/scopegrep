@@ -5,177 +5,136 @@ description: Semantic repository retrieval for behaviour-to-code gaps - a sympto
 
 # Scopegrep: semantic repository retrieval
 
-Scopegrep ranks repository chunks against a natural-language question using the
-attention a 9B model pays to each chunk while reading the question. It finds
-code that does not contain your words. It costs a GPU call and a few seconds.
+Scopegrep finds code by matching what a question *means* against a declared
+scope of the repository, rather than by matching the words in the question
+against the words in the code. It answers a different kind of query than
+grep does, at a higher cost per call, over a network round trip.
 
 ## When it is the right tool
 
 | you have | use | why |
 |---|---|---|
-| a symbol, error string, file path, or literal | **grep** | exact, free, instant. Measured on the same corpus: a path-aware grep found the right file at rank 1 **35%** of the time; scopegrep **20%**. |
-| a traceback quoting a path | **grep that path** | the path is the answer; do not pay a GPU to rediscover it |
-| a behaviour or symptom with no literal | **`scopegrep_retrieve`** | grep has no query to run. On tool-schema retrieval keyword ranking plateaus at 0.850 recall; scopegrep reaches 0.950. |
-| grep returned 400 hits | **`scopegrep_retrieve`** with a narrow `include` | ranking is the problem, not matching |
+| a symbol, error string, file path, or literal | **grep** | exact, free, instant — it's better at this than scopegrep is |
+| a traceback quoting a path | **grep that path** | the path is the answer; do not spend a call rediscovering it |
+| a behaviour or symptom with no literal | **`scopegrep_retrieve`** | grep has no query to run here; this is where it earns its cost |
+| grep returned far too many hits | **`scopegrep_retrieve`** with a narrow `include` | ranking is the problem, not matching |
 | grep returned nothing and you are out of guesses | **`scopegrep_retrieve`** | its best case |
-| you already know the file | **read it** | scoping to one known file is a `Read` in a GPU costume |
+| you already know the file | **read it** | scoping to one known file just re-derives what you already have |
 
 This is advisory routing, not a gate. Nothing here requires a retrieval before
 a grep or a read, and a call that was not going to change what you do next is
 pure cost.
 
-### The two measured failure modes
+### Two failure modes to avoid
 
-- **Forcing it where grep already wins.** A run that scoped to
-  `["django/db/models/query.py"]` — a file it had already named — and retrieved
-  inside it spent a 73s cold start, a 28,988-character result and two extra
-  round trips to locate a range one `Read` produced in 1,127 characters.
-- **Retrieval that does not end the search.** Two `output="chunks"` retrievals
-  returned ~7.5k tokens of payload, but cache-read grew by **283k tokens**,
-  because a tool result is re-sent on every later turn. What you pay is
-  *payload x turns*. A cheap result that fails to end the search is the
-  expensive one — a locations-only run returned 1.3k characters and then spent
-  11.7k re-reading the files it had just ranked.
+- **Forcing it where grep already wins.** Scoping to a single file you had
+  already named, and retrieving inside it, pays the call's full cost for
+  something a direct read would have answered.
+- **Retrieving and then searching anyway.** A retrieval that returns a small,
+  useful result but doesn't end the search — because the caller re-reads
+  everything it just ranked — costs more than the retrieval itself, since
+  every returned result gets re-sent on every later turn of the conversation.
 
-Both are the same error: retrieving when you already know where to look, or
-retrieving and then searching anyway.
+Both are the same error: paying for a search whose answer you either already
+have, or are about to throw away.
 
 ## Calling it
 
 One call is meant to be enough. Scope is resolved and cached inside the
-plugin, so `scopegrep_scope` is optional — use it when you want to see a chunk
-count before spending, not as a required first step.
+plugin, so `scopegrep_scope` is optional — use it when you want to see a size
+estimate before spending, not as a required first step.
 
 ```
 scopegrep_retrieve(
     query="<the whole issue body, traceback, or failing test — not keywords>",
-    include=["django/template/**/*.py"],   # a subsystem, not the repo
+    include=["src/some_subsystem/**/*.py"],   # a subsystem, not the repo
     budget_tokens=3000,
 )
 ```
 
-**Write the query as prose.** The recall figures below were measured with full
-GitHub issue bodies — paragraphs, stack traces, reproduction steps — as the
-query. It is scored at full token resolution against every candidate, so
-detail is signal. `retry logic` throws that away.
+**Write the query as prose.** Full context — paragraphs, stack traces,
+reproduction steps — works better than a few keywords, because the query is
+matched against candidates in full, not reduced to terms first. `retry logic`
+throws away detail that a full description would have used.
 
-**Scope to a subsystem.** A 200-file scope ranks better and costs less than a
-2,000-file one; the service refuses above ~1,200 chunks.
+**Scope to a subsystem.** A narrow, well-chosen scope ranks better and costs
+less than searching the whole repository; very large scopes are refused
+outright above a size limit.
 
-## Budget, not k
+## Budget
 
 The response is governed by `budget_tokens` — the size of the whole reply,
 headers included. Evidence items are included whole or not at all, and
-anything dropped is named by location so you can ask for it.
+anything dropped is named by location so you can ask for it with a larger
+budget if it turns out to matter.
 
-Measured by re-scoring the stored 2026-09-05 rankings at matched serialized
-budgets (20 SWE-bench issues, gold = the file the accepted patch edited):
+There's a sensible default; going well below it trades away real recall, and
+going well above it has fast-diminishing returns for a code question. Prefer
+the default unless you have a specific reason to change it.
 
-| budget | mean gold recall | note |
-|---|---|---|
-| 500 | 0.350 | too tight; roughly half the recall of 4k |
-| 1,000 | 0.550 | |
-| 2,000 | 0.750 | |
-| **3,000** | **0.800** | default |
-| 4,000 | 0.800 | |
-| 12,000 | 0.850 | +8k tokens buys +0.05 recall |
-
-The knee is between 2k and 4k. Below 1k you are paying for a GPU call and
-throwing away most of what it ranked. Scale down for a small scope: a run
-against a 90-chunk / 29k-token scope returned 6,214 tokens — 21.3% of the
-whole corpus — for a question one `Read` answered in 1,127 characters.
-
-`ranking_valid_to_k` in the response is the depth stage 2 re-scored at full
-resolution; items past it are stage-1 gist order and are weaker evidence.
+`ranking_valid_to_k` in the response tells you how deep the ranking was
+double-checked; items past it are a weaker first-pass estimate.
 
 ## Reading a result
 
-Each item carries `path:start-end`, its content revision, and whether stage 2
-re-ranked it. Scores rank *within* one result set; they are not stable
-confidence values across queries or scopes, and the returned percentage is
-context consumed, not accuracy.
+Each item carries `path:start-end` and its content revision. Scores rank
+*within* one result set; they are not stable confidence values across
+different queries or scopes.
 
 A returned chunk is a window, not a file. Read the reported line range when
 the window cut off the part you need — that is following the evidence, not
 re-reading it.
 
-**Resolve dangling references.** A chunk can hold the right code and still not
-hold the deciding fact. Measured: asked why a template renders an empty
-string, retrieval returned the correct chunk at rank 1, ending in
-`current = context.template.engine.string_if_invalid`. That is the answer only
-if you know `string_if_invalid` defaults to `""` — which lives in another
-file. A rival chunk literally contained `return ""`, and a model told to
-answer from the chunks alone picked it. The response includes a resolved
-references block for exactly this; a binding it marks `AMBIGUOUS` has more
-than one candidate in scope and is **not** an answer.
+**Resolve dangling references.** A chunk can hold the right code and still
+not hold the deciding fact — e.g. a returned line ending in a call to
+something whose default value lives in another file entirely. The response
+includes a resolved-references block for exactly this; a binding it marks
+`AMBIGUOUS` has more than one candidate in scope and is **not** an answer on
+its own.
+
+**What else calls this.** For symbols the returned code *defines*, the
+response also reports where else in the repository they're called — so a
+change doesn't miss a sibling call site it should also have touched.
 
 ## Several phrasings
 
-`scopegrep_multi_retrieve` fuses several queries over one scope. Use it when a
-question has genuinely distinct sub-parts needing different evidence — a
-behaviour *and* the default that governs it. Do not use it for paraphrases of
-one question: measured on two documents, naive packaged-query fusion fell from
-1.0 coverage to 0.233, and a union merely recovered the single-query baseline.
+`scopegrep_multi_retrieve` fuses several queries over one scope. Use it when
+a question has genuinely distinct sub-parts needing different evidence — a
+behaviour *and* the default that governs it. Don't use it for paraphrases of
+one question; that tends to dilute the result rather than sharpen it.
 
-Agreement counts are reported as **coverage** — how many of your queries
-ranked a chunk — and nothing more. They are not a correctness signal: a failed
-query shrinks the denominator, and paraphrases are correlated evidence, so a
-chunk every phrasing returned can still be the wrong chunk. Decide from the
-code. If none of it implements the behaviour, say so and fall back to grep.
-
-## Who it helps
-
-The tool's value scales inversely with how well the calling model already
-searches, because what it sells is a shortcut past flailing.
-
-| model | grep-only | with scopegrep | verdict |
-|---|---|---|---|
-| Haiku 4.5 | 40.5s, 12 turns, 316,813 tok, partly wrong | 43.0s, 4 turns, 106,346 tok, correct | ~2.98x fewer tokens, better answer |
-| Sonnet | 16.0s, 3 turns, 103,851 tok, correct | 39.6s, 4 turns, 147,011 tok, **wrong** | slower, costlier, worse |
-
-Sonnet greps in three turns and leaves nothing to recover; forced onto the
-retrieval path it answered worse. Offered the tool and left to judge, it
-declined and grepped — the right call. Two observations, not a general result.
+Agreement across phrasings is reported as **coverage** — how many of your
+queries ranked a given chunk — and nothing more. It is not a correctness
+signal: decide from the code itself, and if none of it implements the
+behaviour, say so and fall back to grep.
 
 ## Setup and service behaviour
 
-Three tools: `scopegrep_status` (health, warm containers, cached scopes),
-`scopegrep_scope` (free local preview — no GPU), `scopegrep_retrieve`. If they
-are absent the plugin is not loaded into this session; do not claim retrieval
-succeeded because the skill is present.
+Three tools: `scopegrep_status` (is the service reachable and ready),
+`scopegrep_scope` (a free local size preview), `scopegrep_retrieve`. If these
+are absent, the plugin is not loaded into this session — don't claim a
+retrieval succeeded because this skill is present.
 
 Provide `SCOPEGREP_TOKEN` through the MCP server's environment or
-`~/.config/scopegrep/token`. `SCOPEGREP_URL` only overrides the deployed
-endpoint. Never put a secret in the manifest, repository, skill, or a reply.
+`~/.config/scopegrep/token`. Never put a secret in the manifest, repository,
+skill, or a reply.
 
-- Cold service (scaled to zero): **75-150s** for the first call, almost all of
-  it loading the model. A retrieval that paid a cold start says so.
-- First query on a new scope, warm: **~5-10s**. 589 chunks / 198k tokens
-  indexed in 9.7s; 139 chunks in 2.3s.
-- Repeat queries on an unchanged scope: **~2.0-2.5s**, question-only through
-  the warm KV cache — bit-identical scores, verified by
-  `tools/smoke.py --selftest`.
-- The container scales to zero after 3 minutes idle.
+- **The service can go idle and take a while to wake up.** The first call
+  after a period of no use can take a couple of minutes; a retrieval that
+  paid that cost says so in its response.
+- **Repeat queries against the same scope are fast.** Only a new or changed
+  scope pays the slow first cost.
+- Editing any file in the scope invalidates the cached result for it, so the
+  next query against that scope re-processes it.
 
-Editing any file in the scope invalidates the local cache — identity is a
-content hash, so a same-size edit that preserves the timestamp still
-invalidates — and the next query re-uploads.
+## Known limits, stated rather than worked around
 
-## Known limits, to be stated rather than worked around
-
-- **Recall is not 1.0.** At a 3k budget one code query in five did not surface
-  its gold file. Scopegrep narrows the search; it does not close it.
-- **The scorer is not the model reading the results.** Ranking comes from
-  Qwen3.5-9B. A 0.8B model on the same documents scored Spearman 0.799 and
-  keep-set IoU 0.662 — correlated, not identical.
-- **Hybrid ranking is not established as a token-efficiency win.** Its extra
-  recall at equal k came with ~32% more returned tokens, and at matched
-  budgets on 20 queries no budget showed an advantage whose 95% confidence
-  interval excluded zero.
-- **Scopes above ~1,200 chunks are unmeasured.** The largest benchmarked
-  haystack was 589 chunks / 198k tokens.
-- **`split="window"` is unmeasured.** The published recall came from one
-  head-truncated chunk per file.
+- **Recall is not 1.0.** This narrows a search; it does not guarantee it
+  finds the right place on every query.
+- **The ranking model is not the model reading the results**, and cross-model
+  agreement, while generally strong, is not identical.
+- **Very large scopes are unsupported.** Scope to a subsystem, not a whole
+  large repository, for both cost and quality reasons.
 - **Scope excludes some files by policy** and says so in the response:
   gitignored paths, credential-shaped files, and anything whose real path
   resolves outside the declared root.

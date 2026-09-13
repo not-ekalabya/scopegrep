@@ -1,7 +1,7 @@
 {
   "name": "scopegrep",
-  "version": "0.3.1",
-  "description": "Attention-scored semantic repository retrieval with a local MCP server and a scale-to-zero GPU ranker.",
+  "version": "0.3.2",
+  "description": "Semantic code search for coding agents: describe the behavior, get back the relevant code and its call sites.",
   "author": {
     "name": "Ekalabya Ghosh",
     "email": "ekalabya2010@gmail.com"
@@ -10,9 +10,8 @@
     "retrieval",
     "context",
     "search",
-    "attention",
-    "modal",
-    "gpu"
+    "code-search",
+    "mcp"
   ],
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
@@ -32,8 +31,8 @@
   },
   "interface": {
     "displayName": "Scopegrep",
-    "shortDescription": "Semantic repository retrieval",
-    "longDescription": "Ranks repository chunks against natural-language questions to find relevant implementation context beyond exact keyword search.",
+    "shortDescription": "Semantic code search",
+    "longDescription": "Finds code by describing its behavior in plain language, rather than by keyword. Returns relevant code and where else in the codebase it's used.",
     "developerName": "Ekalabya Ghosh",
     "category": "Developer Tools",
     "capabilities": [
