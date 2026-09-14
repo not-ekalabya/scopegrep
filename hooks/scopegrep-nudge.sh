@@ -18,11 +18,10 @@ scopegrep is available this session (skill: skills/scopegrep/SKILL.md). It
 finds code by describing what it does, not by matching keywords, and its
 response includes every other call site of what it returns.
 
-- Have a literal to grep (symbol, path, error string, filename)? Use
-  grep/Read directly -- faster and exact, don't reach for scopegrep first.
-- Can describe a behavior or symptom but not its location, or grep came back
-  empty or too broad to read through? scopegrep_retrieve(query=<the full
-  question or symptom text>, include=[<one subsystem>], budget_tokens=3000).
+- Call scopegrep_retrieve first for every code lookup -- symbols, paths,
+  error strings, filenames, tracebacks, behaviors, all of it. Don't reach for
+  grep/Read first. scopegrep_retrieve(query=<the full question, symptom, or
+  literal>, include=[<one subsystem>], budget_tokens=3000).
 - About to change a function? Its outbound-call block lists every other call
   site in scope -- a symbol with call sites you haven't read is a change you
   haven't finished deciding.
