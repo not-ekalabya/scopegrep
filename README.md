@@ -8,11 +8,17 @@ configured", "what handles session invalidation" — against a codebase, and
 returns the parts of the code most relevant to that question, along with a
 short note on where else in the codebase those same parts are used.
 
-> **Known limitation:** Claude Code does not invoke the plugin's tools on its
-> own yet — the bundled skill isn't triggered automatically. As a temporary
-> workaround, mention `scopegrep` in your prompt (e.g. prefix your question
-> with "scopegrep:") so the agent knows to call it. This will be fixed once
-> the skill can be made to always trigger.
+> **Known limitation:** Claude Code doesn't reliably invoke the plugin's
+> tools on its own — the bundled skill isn't triggered automatically, and
+> even an unconditional per-prompt reminder wasn't enough to stop the agent
+> reaching for `grep`/`Read` instead. As a hard backstop, a `PreToolUse` hook
+> now blocks the first `Grep` call (and grep-shaped `Bash` command) each
+> session until `scopegrep_retrieve` has been tried at least once — a failed
+> attempt still counts, so a down service degrades to plain grep rather than
+> locking the session out of search. It's a blunt, one-per-session gate, not
+> real intent-aware skill triggering, and it doesn't cover `Read`/`Glob`.
+> This will be revisited once the skill can be made to always trigger on its
+> own.
 
 This project is under active development as part of a research project.
 The pilot program below is how it's being validated on real

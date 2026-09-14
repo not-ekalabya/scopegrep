@@ -1,6 +1,6 @@
 {
   "name": "scopegrep",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "Semantic code search for coding agents: describe the behavior, get back the relevant code and its call sites.",
   "author": {
     "name": "Ekalabya Ghosh",
@@ -24,6 +24,30 @@
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scopegrep-nudge.sh\"",
             "timeout": 5,
             "statusMessage": "Loading scopegrep..."
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "^(Grep|Bash)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scopegrep-gate.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": ".*scopegrep_(multi_)?retrieve$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scopegrep-mark-used.sh\"",
+            "timeout": 5
           }
         ]
       }

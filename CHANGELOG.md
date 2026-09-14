@@ -2,6 +2,17 @@
 
 User-visible changes to the scopegrep plugin. Dates are Asia/Kolkata (IST).
 
+## 0.3.5 — 2026-09-14
+
+- Added a `PreToolUse` hook (`hooks/scopegrep-gate.sh`) that blocks the
+  first `Grep` call, or grep-shaped `Bash` command, in a session until
+  `scopegrep_retrieve`/`scopegrep_multi_retrieve` has been tried at least
+  once — the per-prompt reminder alone wasn't enough to stop the agent
+  reaching for grep first. Lifted by a `PostToolUse` hook
+  (`hooks/scopegrep-mark-used.sh`) that marks the session as soon as a
+  retrieval is attempted, success or failure, so a down service doesn't
+  lock the session out of search.
+
 ## 0.3.4 — 2026-09-13
 
 - The `UserPromptSubmit` hook now fires on every prompt instead of only ones
