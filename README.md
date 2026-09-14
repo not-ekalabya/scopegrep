@@ -8,6 +8,12 @@ configured", "what handles session invalidation" — against a codebase, and
 returns the parts of the code most relevant to that question, along with a
 short note on where else in the codebase those same parts are used.
 
+> **Known limitation:** Claude Code does not invoke the plugin's tools on its
+> own yet — the bundled skill isn't triggered automatically. As a temporary
+> workaround, mention `scopegrep` in your prompt (e.g. prefix your question
+> with "scopegrep:") so the agent knows to call it. This will be fixed once
+> the skill can be made to always trigger.
+
 This project is under active development as part of a research project.
 The pilot program below is how it's being validated on real
 codebases; the retrieval method itself, the model behind it, and the full
