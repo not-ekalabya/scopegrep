@@ -43,10 +43,19 @@ previously-passing tests, in every run, both arms.
 
 **Cost: 21-43% fewer input tokens billed per task**, depending on the task
 (n=3 repetitions per task). This is the reproducible number — a later,
-independent rerun landed within a point of the original measurement. On
-harder, more varied real-world tasks this number moves around and isn't
-always a win by itself — cost is a secondary effect of fewer wasted turns,
-not the primary claim.
+independent rerun landed within a point of the original measurement.
+
+On harder, more varied real-world tasks the per-task number moves around
+and isn't always a win by itself. That range is a real property of running
+an LLM agent, not noise specific to this tool: the identical task, run
+twice with the identical setup, can bill substantially different token
+totals from one rollout to the next, since a coding agent's path through a
+task (how many turns it takes, what it decides to re-read) isn't fixed.
+Against that per-run variance, the more meaningful comparison isn't
+per-attempt cost but cost per successfully-resolved task — paying for the
+occasional failed attempt is still cheaper in aggregate when the tool
+resolves more of them overall. That is what the range above is
+approximating, not a promise that every individual run comes in cheaper.
 
 ### Why input tokens matter this much
 
