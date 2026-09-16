@@ -1402,13 +1402,33 @@ def _resolve_outbound(returned_idx, chunks, meta, root=None,
     # Sorting on the raw count puts the worst entries first: a generic name
     # used everywhere is a fact about the word rather than a change to make,
     # and would crowd out a more specific symbol with a small, actionable
-    # list of call sites. So: symbols with an enumerable set first (most
-    # sites first among those), then the ones with nothing outside, then
-    # the floods.
+    # list of call sites. So: symbols with an enumerable set first (fewest
+    # sites first among those, since a smaller set is the more decidable
+    # one), then the ones with nothing outside, then the floods.
+    #
+    # Fixed 2026-09-15 (decoding/docs/FOLDP.md S8 defect 1, ported here from
+    # gistgrep_bench/env/gistgrep_outbound/gistgrep_mcp.py): this was
+    # `(0, -outside)`, ranking the largest enumerable count first -- measured
+    # cause of the foldw regression (a repo-wide `nunique`, 11 sites,
+    # displaced `_get_data_to_aggregate`'s 4 from the six-symbol block on
+    # pandas-groupby-dtype MEDIUM).
+    #
+    # Checked against every real foldp block on disk, split by what the check
+    # can actually see: a block showing fewer than six nonzero (non-flood)
+    # symbols proves nothing was cut, so the flip only reorders it, never
+    # changes membership. That covers all of
+    # decoding/experiments/swebench_large_20260914/results (max 2 per block)
+    # and all but two of gistgrep_bench/results_prepared's real foldp blocks.
+    # Two blocks -- pandas-groupby-dtype/foldp/r2's second and third
+    # retrieves -- show exactly six nonzero symbols, which a transcript
+    # cannot distinguish from "a seventh was cut": not ruled out, would need
+    # the actual `defined` dict replayed to settle. See test_outbound_rank.py
+    # in the fork this was ported from for the synthetic case that pins the
+    # fix's direction in isolation.
     def rank(kv):
         outside = kv[1][1]
         if 0 < outside <= max_sites:
-            return (0, -outside)
+            return (0, outside)
         return (1, 0) if outside == 0 else (2, outside)
 
     ranked = sorted(found.items(), key=rank)[:max_symbols]
