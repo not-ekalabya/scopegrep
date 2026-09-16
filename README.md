@@ -31,17 +31,22 @@ real sample sizes, not the methodology behind them.
 
 Measured on real, previously-unseen bug fixes in open-source Python
 projects, comparing an agent with `scopegrep` wired in against the same
-agent with no retrieval tool at all, same prompt otherwise.
-
-**Cost: 21-43% fewer input tokens billed per task**, depending on the task
-(n=3 repetitions per task). This is the reproducible number — a later,
-independent rerun landed within a point of the original measurement.
+agent with no retrieval tool at all, same prompt otherwise. The headline
+result is capability, not cost: what changes is whether the agent gets the
+fix right, not just how much it costs to get there.
 
 **Accuracy: 96% of test cases passed with `scopegrep`, vs. 85% with no
 retrieval tool at all** (63 test cases across 7 runs vs. 27 across 3 runs, on
 a fix that needs several call sites of the same function updated together —
 not just the one a keyword search would find). Zero regressions on
 previously-passing tests, in every run, both arms.
+
+**Cost: 21-43% fewer input tokens billed per task**, depending on the task
+(n=3 repetitions per task). This is the reproducible number — a later,
+independent rerun landed within a point of the original measurement. On
+harder, more varied real-world tasks this number moves around and isn't
+always a win by itself — cost is a secondary effect of fewer wasted turns,
+not the primary claim.
 
 ### Why input tokens matter this much
 
