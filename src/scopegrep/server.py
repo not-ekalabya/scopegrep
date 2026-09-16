@@ -109,7 +109,7 @@ BOUNDARY = re.compile(
     r"|protected |func |fn |package |module |@|#\[|///|/\*\*)"
 )
 
-mcp = _Server("scopegrep", version="0.3.4")
+mcp = _Server("scopegrep", version="0.3.6")
 _scope_cache = {}          # local_key -> {"chunks","meta","scope_key","built_at"}
 
 
@@ -843,6 +843,16 @@ def scopegrep_retrieve(query: str,
     "which module owns session invalidation", "what handles the migration
     rollback path". It reads the whole scope and ranks every chunk together
     in one pass, so it finds code that never mentions your words.
+
+    Also use it for architecture/wiring questions that cross several files
+    with no shared vocabulary -- a config file, the selector function that
+    picks between variants, and a comment explaining why, none of which use
+    the same word for the same idea. One call ranks all of it together and
+    routinely surfaces a sibling config or existing precedent you did not
+    know to grep for, because it read the whole scope, not just the file you
+    named. This is not keyword search with reranking: every result that
+    defines a symbol also reports every other call site of it in scope,
+    unprompted -- see the "WHAT ELSE CALLS WHAT YOU JUST READ" block below.
 
     Use it when the question is behaviour and you do not have the vocabulary:
     a symptom, an issue body, "which part decides X". If you already have a

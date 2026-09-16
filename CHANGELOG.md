@@ -2,6 +2,23 @@
 
 User-visible changes to the scopegrep plugin. Dates are Asia/Kolkata (IST).
 
+## 0.3.6 — 2026-09-16
+
+- Skill and `scopegrep_retrieve` docstring both gained a "complex tasks, not
+  just point lookups" section: an agent this session, working on the research
+  repo, defaulted to manual grep across a config/selector/precedent question
+  spanning several files that shared no vocabulary — despite the skill
+  already saying "call this first." One `scopegrep_retrieve` call on the same
+  question, tried afterward, surfaced a sibling config pattern and a second
+  selector function the manual search had missed entirely, unprompted, via
+  the existing outbound-call block. The gap was that the skill described
+  *when* to call it but not what a genuinely complex, multi-file, no-shared-
+  vocabulary win looks like — so there was nothing concrete to recognize the
+  moment against. Added a `include=[...]` row to the lookup table for
+  wiring/config-spanning questions specifically, and led the retrieve
+  docstring's own opening with the same point, since that's what an agent
+  reads at the moment it's deciding whether to reach for this over grep.
+
 ## 0.3.5 — 2026-09-14
 
 - Added a `PreToolUse` hook (`hooks/scopegrep-gate.sh`) that blocks the

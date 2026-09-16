@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "scopegrep"
-version = "0.3.5"
+version = "0.3.6"
 description = "Semantic code search for coding agents: describe the behavior, get back the relevant code and its call sites."
 readme = "README.md"
 license = { text = "MIT" }

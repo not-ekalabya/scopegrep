@@ -19,9 +19,37 @@ path, an error string, a traceback, a behaviour, a symptom, all of it.
 | a symbol, error string, file path, or literal | **`scopegrep_retrieve`** | still the first call — it returns the window plus every other call site in one round trip |
 | a traceback quoting a path | **`scopegrep_retrieve`** on that path's subsystem | confirms the hit and returns its call sites in the same response |
 | a behaviour or symptom with no literal | **`scopegrep_retrieve`** | grep has no query to run here; this is where it earns its cost |
+| a wiring/config question spanning files with no shared vocabulary ("how does X actually get configured", "what overrides Y", "is there already a pattern for this") | **`scopegrep_retrieve`** scoped to the subsystem | ranks scattered config, code, and precedent together by meaning; grep needs a shared word across every file to connect them |
 | grep returned far too many hits | **`scopegrep_retrieve`** with a narrow `include` | ranking is the problem, not matching |
 | grep returned nothing and you are out of guesses | **`scopegrep_retrieve`** | its best case |
 | you already know the exact file and line range | **read it** | scoping to one known, fully-identified location just re-derives what you already have |
+
+### Complex tasks, not just point lookups
+
+This is not keyword search with better ranking. Two things a point lookup
+does not do, that a single call here does:
+
+- **Trace something across files that share no vocabulary.** How a behavior
+  is actually configured often crosses a JSON/YAML config, a selector
+  function picking between variants, and a comment explaining why — three
+  files that never use the same word for the same idea, so no grep query
+  connects them. One `scopegrep_retrieve` call ranks the whole declared scope
+  by meaning at once, and routinely surfaces a sibling config or an existing
+  precedent for the exact thing you were about to hand-roll, because it read
+  files you did not think to search, not just the ones you named.
+- **Answer the completeness half of the question, unprompted.** Every result
+  that returns a chunk defining a symbol also reports every other call site
+  of it in scope ("What else calls this," below) and every unresolved
+  binding the returned code depends on ("Resolve dangling references,"
+  below) — without a second call. A plain search returns matches; this also
+  returns what breaks if you change what it found.
+
+Reach for it on architecture-shaped questions, not only "where is X":
+*how does this actually get configured end-to-end*, *what else has to change
+if I touch this*, *is there already a pattern for what I'm about to add*. On
+these, one well-scoped call tends to beat several rounds of manual grep —
+not because it's faster (it isn't; see below), but because it doesn't
+require already knowing which files to look in.
 
 ### One failure mode to avoid
 
