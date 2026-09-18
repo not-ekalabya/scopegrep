@@ -17,33 +17,50 @@ real sample sizes, not the methodology behind them.
 
 ## Results so far
 
-Measured on real, previously-unseen bug fixes in open-source Python
-projects, comparing an agent with `scopegrep` wired in against the same
-agent with no retrieval tool at all, same prompt otherwise. The headline
-result is capability, not cost: what changes is whether the agent gets the
-fix right, not just how much it costs to get there.
+Two separate measurements, on two different kinds of evidence: a designed
+retrieval-quality benchmark (deterministic, scored directly), and real agent
+runs on previously-unseen open-source bug fixes (stochastic, agent-driven).
 
-**Accuracy: 96% of test cases passed with `scopegrep`, vs. 85% with no
-retrieval tool at all** (63 test cases across 7 runs vs. 27 across 3 runs, on
-a fix that needs several call sites of the same function updated together —
-not just the one a keyword search would find). Zero regressions on
-previously-passing tests, in every run, both arms.
+**Completeness — the actual capability claim, and the one with a real
+significance test behind it.** On a same-repo, multi-gold benchmark built
+around the exact failure this tool targets (50 questions across two
+unrelated real codebases, 2-7 real call sites each — a fix that needs
+several call sites of the same function updated together, not just the one
+a keyword search would find): scored on whether retrieval surfaces the
+*definition* — the step that decides whether the rest of the call sites can
+even be found — `scopegrep` reaches 92% by the top 10 results and 100% by
+the top 20. A standard dense-embedding baseline, given the same budget,
+reaches 60% and 74% at the same two points, and still hasn't reached 100%
+even given the top 50. The gap is real, not sampling luck: a 95% confidence
+interval on the difference at the top-20 mark is +14 to +40 percentage
+points, computed by resampling the 50 questions 2,000 times — it does not
+cross zero. (At the very top result only, the dense baseline actually wins,
+36% to 16% — reporting that honestly too; `scopegrep`'s advantage shows up
+once it's allowed a handful of results, not right at rank one.)
 
-**Cost: 21-43% fewer input tokens billed per task**, depending on the task
-(n=3 repetitions per task). This is the reproducible number — a later,
-independent rerun landed within a point of the original measurement.
+**Cost: 21-43% fewer input tokens billed per task** on real agent runs
+(n=3 repetitions per task), depending on the task. This is the reproducible
+number — a later, independent rerun landed within a point of the original
+measurement.
 
-On harder, more varied real-world tasks the per-task number moves around
-and isn't always a win by itself. That range is a real property of running
-an LLM agent, not noise specific to this tool: the identical task, run
-twice with the identical setup, can bill substantially different token
+**What we're not claiming.** An earlier version of this page reported an
+accuracy delta — the agent resolves more bugs with the tool wired in than
+without. That number does not survive a fuller pool of the same repeated
+task: real agent-driven bug-fix runs vary enough, run to run, that the
+repetition counts affordable for a project this size (single digits per
+arm) aren't enough to tell a real effect from noise, in either direction.
+We'd rather say that plainly than repeat a number that looked good on a
+first small sample. The completeness result above doesn't have this
+problem — it's a deterministic score over a designed benchmark, not an
+agent's stochastic path through a task, so a much smaller sample size
+actually means something there.
+
+On harder, more varied real-world tasks the per-task cost number moves
+around and isn't always a win by itself. That range is a real property of
+running an LLM agent, not noise specific to this tool: the identical task,
+run twice with the identical setup, can bill substantially different token
 totals from one rollout to the next, since a coding agent's path through a
 task (how many turns it takes, what it decides to re-read) isn't fixed.
-Against that per-run variance, the more meaningful comparison isn't
-per-attempt cost but cost per successfully-resolved task — paying for the
-occasional failed attempt is still cheaper in aggregate when the tool
-resolves more of them overall. That is what the range above is
-approximating, not a promise that every individual run comes in cheaper.
 
 ### Why input tokens matter this much
 

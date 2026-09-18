@@ -2,6 +2,38 @@
 
 User-visible changes to the scopegrep plugin. Dates are Asia/Kolkata (IST).
 
+## 0.3.8 — 2026-09-18
+
+- Added `.scopegrepignore` support: same gitignore-pattern syntax as
+  `.gitignore`/`.ignore`, honoured alongside them on every call against a
+  root, no `exclude=` needed per call. Found the gap the hard way: an
+  `include=["**/*.py"]` scope against a repo with baked-in task
+  environments and run-output directories walked several hundred thousand
+  files before hitting the size check, because those directories were
+  neither gitignored nor caught by the generic default excludes (which
+  only match directories literally named `env`, not project-specific
+  names). `exclude=` fixes one call; a root-level ignore file now fixes
+  every call against it. Documented in the skill under "Repos with noisy
+  generated directories."
+
+## 0.3.7 — 2026-09-17
+
+- README "Results so far" corrected: the accuracy-delta claim (96% vs 85% of
+  test cases, 63 vs 27 across runs) is withdrawn. Re-pooling the full set of
+  real agent episodes now on disk — more than existed when that number was
+  first measured — shows no significant resolution-rate effect in either
+  direction; the sample sizes affordable for repeated real agentic bug-fix
+  runs aren't enough to tell a real effect from noise. Replaced with the
+  completeness benchmark result as the lead capability claim, and reworded
+  the cost section so it no longer leans on the withdrawn accuracy number to
+  justify its range.
+- Completeness benchmark expanded same day, n=20 (one repo) → n=50 (two
+  unrelated repos), and given a real significance test for the first time:
+  def-file recall 92%/100% at k=10/k=20 vs a dense-embedding baseline's
+  60%/74%, 95% CI on the k=20 gap [+14, +40] points, excludes zero. Reported
+  the baseline's k=1 win honestly too (36% vs 16%) rather than only the
+  favorable cuts.
+
 ## 0.3.6 — 2026-09-16
 
 - Skill and `scopegrep_retrieve` docstring both gained a "complex tasks, not

@@ -24,6 +24,13 @@ Configuration:
                   plugin root -- so the secret never has to live in a shell
                   profile or in the MCP config.
   SCOPEGREP_ROOT   repository root to search (default: cwd)
+
+A `.scopegrepignore` file anywhere under the walked root -- same syntax as
+`.gitignore`, same per-directory precedence -- is honoured alongside
+`.gitignore`/`.ignore` on every call against that root, no `exclude=`
+needed. Use it for paths that should never be ranked regardless of git
+status: generated run directories, baked-in task environments, anything a
+project's own tooling produces that happens to sit under the repo root.
 """
 import hashlib
 import json
@@ -109,7 +116,7 @@ BOUNDARY = re.compile(
     r"|protected |func |fn |package |module |@|#\[|///|/\*\*)"
 )
 
-mcp = _Server("scopegrep", version="0.3.6")
+mcp = _Server("scopegrep", version="0.3.8")
 _scope_cache = {}          # local_key -> {"chunks","meta","scope_key","built_at"}
 
 
@@ -280,7 +287,7 @@ def _walk(root, include, exclude, use_ignore_files=True, follow_symlinks=False):
     Three containment rules the previous walk did not enforce, each of which
     put content in a scope the caller had not asked for:
 
-    * `.gitignore` / `.ignore` are honoured. Generated trees and vendored
+    * `.gitignore` / `.ignore` / `.scopegrepignore` are honoured. Generated trees and vendored
       output are not source, and a scope that silently includes them spends
       the caller's budget ranking artifacts against their question.
     * credential-shaped files are refused outright, and refusing is reported.
@@ -305,7 +312,16 @@ def _walk(root, include, exclude, use_ignore_files=True, follow_symlinks=False):
         rel_dir = "" if rel_dir == "." else rel_dir
 
         if use_ignore_files:
-            for name in (".gitignore", ".ignore"):
+            # `.scopegrepignore` alongside `.gitignore`/`.ignore`, same
+            # gitignore-pattern syntax, same per-directory precedence. Git
+            # ignoring a path says nothing about whether it should be
+            # ranked -- a project's own generated run/template/env
+            # directories are routinely tracked (or simply never
+            # gitignored) while still being exactly the noise a retrieval
+            # scope should never walk. `exclude=` on a single call covers
+            # a one-off; this covers every call against the root without
+            # the caller having to remember it each time.
+            for name in (".gitignore", ".ignore", ".scopegrepignore"):
                 candidate = os.path.join(dirpath, name)
                 if os.path.isfile(candidate):
                     ignore.add_file(candidate, rel_dir)
@@ -366,7 +382,7 @@ def _walk(root, include, exclude, use_ignore_files=True, follow_symlinks=False):
 def _coverage_note(coverage):
     """One line naming what the scope does NOT contain, or None."""
     interesting = {
-        "ignored_by_ignore_file": "ignored by .gitignore/.ignore",
+        "ignored_by_ignore_file": "ignored by .gitignore/.ignore/.scopegrepignore",
         "sensitive_refused": "refused as credential-shaped",
         "outside_root": "symlinked outside the declared root",
         "too_large": f"larger than {MAX_FILE_BYTES:,} bytes",

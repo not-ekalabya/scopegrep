@@ -156,5 +156,20 @@ skill, or a reply.
 - **Very large scopes are unsupported.** Scope to a subsystem, not a whole
   large repository, for both cost and quality reasons.
 - **Scope excludes some files by policy** and says so in the response:
-  gitignored paths, credential-shaped files, and anything whose real path
-  resolves outside the declared root.
+  gitignored paths (`.gitignore`, `.ignore`, and `.scopegrepignore` — same
+  syntax, all honoured together), credential-shaped files, and anything
+  whose real path resolves outside the declared root.
+
+### Repos with noisy generated directories
+
+A broad `include` (`["**/*.py"]`, or no `include` at all) walks everything
+under root before scope size is even checked — a repo with baked-in task
+environments, run/output directories, or vendored checkouts sitting
+alongside real source can turn a scope that should be a few hundred files
+into hundreds of thousands, most of it installed-library internals nobody
+meant to rank. `exclude=[...]` fixes one call; a `.scopegrepignore` file at
+the repo root fixes every call against it, the same way a `.gitignore` you
+already maintain would, without depending on that file's own scope
+(git-tracked vs generated is a different question from search-worthy vs
+noise). Add one wherever a project keeps generated environments or run
+output under its root.
