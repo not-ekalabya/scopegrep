@@ -116,7 +116,7 @@ BOUNDARY = re.compile(
     r"|protected |func |fn |package |module |@|#\[|///|/\*\*)"
 )
 
-mcp = _Server("scopegrep", version="0.3.8")
+mcp = _Server("scopegrep", version="0.3.9")
 _scope_cache = {}          # local_key -> {"chunks","meta","scope_key","built_at"}
 
 
@@ -281,6 +281,49 @@ def _is_sensitive(rel):
     return base in SENSITIVE_NAMES or _matches(rel, SENSITIVE_GLOBS)
 
 
+def _pattern_segments(p):
+    """Split one include pattern into path segments for directory-reachability
+    checks. A bare pattern (no "/") is anchored at any depth -- the same rule
+    `_matches` applies when it actually matches a file against that pattern --
+    so the walk must not prune a subtree a bare pattern could still reach."""
+    p = p.strip().replace(os.sep, "/").lstrip("/")
+    segs = p.split("/") if p else [""]
+    if len(segs) == 1:
+        segs = ["**"] + segs
+    return segs
+
+
+def _seg_match(name, seg):
+    return _compile_glob(seg).match(name) is not None
+
+
+def _dir_reachable(rel_segments, pattern_segments):
+    """Can some file under the directory named by `rel_segments` (relative to
+    root) still match `pattern_segments`? `**` absorbs zero or more directory
+    segments; any other pattern segment must match exactly one rel segment.
+    Used to prune `os.walk` descent into directories no include pattern can
+    reach, instead of walking them in full and filtering after the fact."""
+    memo = {}
+
+    def reach(i, j):
+        key = (i, j)
+        if key in memo:
+            return memo[key]
+        if i == len(rel_segments):
+            result = True
+        elif j == len(pattern_segments):
+            result = False
+        elif pattern_segments[j] == "**":
+            result = reach(i, j + 1) or reach(i + 1, j)
+        else:
+            result = (_seg_match(rel_segments[i], pattern_segments[j])
+                       and reach(i + 1, j + 1))
+        memo[key] = result
+        return result
+
+    return reach(0, 0)
+
+
 def _walk(root, include, exclude, use_ignore_files=True, follow_symlinks=False):
     """Walk `root` and return (files, coverage).
 
@@ -295,6 +338,15 @@ def _walk(root, include, exclude, use_ignore_files=True, follow_symlinks=False):
       `realpath(root)`. A symlink is a perfectly ordinary repository fixture,
       and one pointing at `../../secrets/prod.py` used to be read, chunked and
       shipped to the service exactly like a source file.
+    * a directory no include pattern can possibly reach is not descended into
+      at all. `include` used to be applied only to filenames after `os.walk`
+      had already recursed through the entire tree -- a caller who passed
+      `include=["pipeline/**"]` against a root that also held unrelated
+      gigabyte-scale sibling directories still paid the cost of walking all
+      of them, because nothing pruned `dirnames` on `include`'s account. A
+      bare pattern (no "/", e.g. `*.py`) is still anchored at any depth, same
+      as `_matches` treats it when matching a file, so it disables pruning
+      exactly where it must: on every directory, not just the ones it means.
 
     `coverage` reports what was skipped and why, so the caller can see that a
     scope is incomplete instead of inferring it from a small chunk count.
@@ -304,8 +356,9 @@ def _walk(root, include, exclude, use_ignore_files=True, follow_symlinks=False):
     coverage = {"ignored_by_ignore_file": 0, "sensitive_refused": 0,
                 "outside_root": 0, "binary": 0, "too_large": 0, "empty": 0,
                 "unreadable": 0, "excluded": 0, "not_included": 0,
-                "ignore_files_read": 0}
+                "ignore_files_read": 0, "pruned_dirs": 0}
     ignore = _Ignore()
+    include_segs = [_pattern_segments(p) for p in include] if include else None
 
     for dirpath, dirnames, filenames in os.walk(root, followlinks=follow_symlinks):
         rel_dir = os.path.relpath(dirpath, root)
@@ -338,6 +391,11 @@ def _walk(root, include, exclude, use_ignore_files=True, follow_symlinks=False):
             if not follow_symlinks and os.path.islink(os.path.join(dirpath, d)):
                 coverage["outside_root"] += 1
                 continue
+            if include_segs is not None:
+                rel_segs = rel.replace(os.sep, "/").split("/")
+                if not any(_dir_reachable(rel_segs, segs) for segs in include_segs):
+                    coverage["pruned_dirs"] += 1
+                    continue
             kept_dirs.append(d)
         dirnames[:] = kept_dirs
 
@@ -387,6 +445,7 @@ def _coverage_note(coverage):
         "outside_root": "symlinked outside the declared root",
         "too_large": f"larger than {MAX_FILE_BYTES:,} bytes",
         "unreadable": "unreadable",
+        "pruned_dirs": "pruned (no include pattern could reach them)",
     }
     parts = [f"{coverage[key]} {text}" for key, text in interesting.items()
              if coverage.get(key)]
@@ -790,10 +849,17 @@ def scopegrep_scope(include: list[str] | str | None = None,
     glob is too broad. A scope of more than ~2000 chunks is rejected by the
     service; a scope of a few hundred chunks is where this performs best.
 
-    include: glob patterns to search, e.g. ["src/**/*.py", "*.md"]. Bare
-        patterns like "*.py" match at any depth. Empty means every text file
-        under root, which is usually too broad to be useful -- scope down to
-        the subsystem the question is about.
+    include: glob patterns to search, e.g. ["src/**/*.py", "*.md"]. A
+        directory-prefixed pattern ("pipeline/**") prunes the walk so
+        unrelated sibling directories under root are never descended into.
+        A bare pattern like "*.py" (no "/") matches at any depth, same as a
+        gitignore rule with no slash -- and because it could match a file in
+        ANY directory, it disables that pruning for the whole call, not just
+        for itself. On a large root, one bare pattern mixed in with narrow
+        ones still forces a full walk; if you don't need cross-repo reach,
+        write "src/**/*.py" instead of "*.py" plus a narrow `root`. Empty
+        means every text file under root, which is usually too broad to be
+        useful -- scope down to the subsystem the question is about.
     exclude: extra globs to skip; sensible defaults (.git, node_modules,
         build dirs, lockfiles, minified assets, binaries) always apply.
     split: "window" cuts whole files into ~chunk_chars windows (covers the
@@ -802,6 +868,12 @@ def scopegrep_scope(include: list[str] | str | None = None,
     chunk_chars: target chunk size. 1500 is the default. Going much below
         ~1000 makes the path header dominate what a short summary of the
         chunk can capture, which hurts ranking quality.
+    root: directory the walk starts from (default: the project root this
+        session was started in). This is the real lever on a monorepo with
+        gigabyte-scale sibling directories (benchmark corpora, vendored
+        checkouts, data dumps) that `include` alone can't prune around --
+        point `root` at the actual subsystem instead of relying on include
+        patterns to filter it out after the fact.
     """
     inc = _norm_globs(include)
     exc = DEFAULT_EXCLUDES + _norm_globs(exclude)

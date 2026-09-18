@@ -2,6 +2,28 @@
 
 User-visible changes to the scopegrep plugin. Dates are Asia/Kolkata (IST).
 
+## 0.3.9 — 2026-09-18
+
+- `_walk` now prunes `os.walk` descent by `include`, instead of walking the
+  entire root and filtering by filename afterward. `include` was documented
+  as the way to scope a call, but a directory-prefixed pattern like
+  `["pipeline/**"]` against a root that also held gigabyte-scale unrelated
+  siblings still paid the cost of walking all of them in full, because
+  nothing pruned `dirnames` on `include`'s account — only `exclude` and
+  ignore files did. Found this diagnosing a "retrieval is not working"
+  report: every call against a 103G, ~650K-file repo hung past two minutes
+  regardless of `include`, because the two benchmark-corpus directories at
+  its root (91G/263K files, 13G) got walked in full every time, unpruned.
+  0.3.8's `.scopegrepignore` fixes this when the caller adds one; this fixes
+  it for every `include`-scoped call, ignore file or not. A bare pattern
+  (`*.py`, no "/") still matches at any depth and disables pruning for the
+  whole call, same as before — documented explicitly now, since mixing one
+  bare pattern into an otherwise narrow `include` silently defeats it.
+  `scopegrep_scope`'s `root` parameter, previously undocumented, is now
+  described: on a monorepo with large sibling directories `include` can't
+  prune around on its own semantics (a bare pattern, mid-pattern `**`),
+  `root` is the parameter that actually bounds the walk.
+
 ## 0.3.8 — 2026-09-18
 
 - Added `.scopegrepignore` support: same gitignore-pattern syntax as
