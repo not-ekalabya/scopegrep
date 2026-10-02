@@ -15,9 +15,8 @@ code.
 
 ## How it works
 
-scopegrep is the retriever from the research paper *Attention as Search:
-Where Language Models Decide What Matters in Their Context, and a Retriever
-for Coding Agents Built on It* (Ekalabya Ghosh, 2026). The paper asks how a language model decides what in its
+scopegrep is the retriever from the research paper *Training-Free Context
+Retrieval from a Language Model's Attention* (2026). The paper asks how a language model decides what in its
 context matters, and finds that attention works in stages: early layers favour
 chunks that resemble the question, one middle layer is where the question
 shifts attention onto what is actually relevant, and later layers spread
@@ -83,15 +82,25 @@ cost of re-encoding after edits in real sessions was not measured.
 
 ## Install
 
+Download the repository as a zip (the **Download** button on the page you got
+this README from), unzip it, and enter the extracted folder:
+
 ```bash
-claude plugin marketplace add not-ekalabya/scopegrep
+unzip scopegrep*.zip -d scopegrep && cd scopegrep
+# if the zip holds a single top-level folder, cd into it as well
+```
+
+Then, from that folder, install the Claude Code plugin:
+
+```bash
+claude plugin marketplace add .
 claude plugin install scopegrep@scopegrep
 ```
 
 or, for the command-line tools only:
 
 ```bash
-pip install git+https://github.com/not-ekalabya/scopegrep.git
+pip install .
 ```
 
 ## Run the scoring service
@@ -101,7 +110,7 @@ The plugin needs a running backend. Pick one ([full guide](docs/SELF_HOSTING.md)
 **Your own GPU** (one CUDA GPU; 24 GB handles scopes up to ~150k tokens):
 
 ```bash
-git clone https://github.com/not-ekalabya/scopegrep.git && cd scopegrep
+# from the unzipped folder (see Install)
 pip install -r backend/requirements.txt
 python backend/serve.py            # http://127.0.0.1:8000, the client's default
 ```

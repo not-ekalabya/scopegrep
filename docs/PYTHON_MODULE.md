@@ -14,7 +14,7 @@ path.
 ## Install
 
 ```bash
-pip install git+https://github.com/not-ekalabya/scopegrep.git
+pip install .    # from the unzipped repository folder (see README, Install)
 ```
 
 This puts two console scripts on `PATH` and installs the `scopegrep` package

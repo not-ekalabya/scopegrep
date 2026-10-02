@@ -65,8 +65,7 @@ upper bounds.
 ## Option A: your own GPU
 
 ```bash
-git clone https://github.com/not-ekalabya/scopegrep.git
-cd scopegrep
+cd scopegrep    # the unzipped repository folder (see README, Install)
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r backend/requirements.txt    # torch 2.12 / transformers 5.8, as in the paper
 python backend/serve.py                    # listens on http://127.0.0.1:8000
@@ -97,8 +96,7 @@ network is not yours.
 ## Option B: Modal
 
 ```bash
-git clone https://github.com/not-ekalabya/scopegrep.git
-cd scopegrep
+cd scopegrep    # the unzipped repository folder (see README, Install)
 pip install modal
 modal setup                                   # one-time login
 
