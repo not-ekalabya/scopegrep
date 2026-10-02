@@ -1,0 +1,9 @@
+# Same pins as the paper's evaluation runs. Install a torch build that matches
+# your CUDA driver first if this one does not (https://pytorch.org).
+torch==2.12.0
+transformers==5.8.0
+accelerate==1.13.0
+safetensors
+fastapi[standard]
+uvicorn
+httpx

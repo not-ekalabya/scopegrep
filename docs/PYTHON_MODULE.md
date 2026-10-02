@@ -2,7 +2,9 @@
 
 This covers `scopegrep` as an installed Python package — for anyone running
 it outside the Claude Code plugin path: another MCP-capable agent host, a
-raw MCP client, or a CI step that warms the service before a demo.
+raw MCP client, or a CI step that warms the service before a demo. The
+scoring service itself is not part of the package; it lives in `backend/`
+and is covered in [SELF_HOSTING.md](SELF_HOSTING.md).
 
 If you installed via `claude plugin install`, you don't need any of this —
 the plugin's `.mcp.json` invokes the server directly through `uv run` and
@@ -23,7 +25,7 @@ This puts two console scripts on `PATH` and installs the `scopegrep` package
 ```
 scopegrep/
 ├── server.py    # the MCP server: the four tools, all retrieval/rendering logic
-└── prewarm.py   # a small CLI that pings the hosted service until it's ready
+└── prewarm.py   # a small CLI that pings the scoring service until it's ready
 ```
 
 Neither module is meant to be imported for its functions — both are
@@ -47,8 +49,8 @@ no config file, no CLI flags.
 Minimal manual invocation, to see the tool list a fresh install exposes:
 
 ```bash
-export SCOPEGREP_URL='<your service URL>'
-export SCOPEGREP_TOKEN='<your access code>'
+export SCOPEGREP_URL='http://127.0.0.1:8000'   # or your Modal URL
+export SCOPEGREP_TOKEN='<your service token>'   # only if the service has one
 python3 -c "
 import subprocess, json
 p = subprocess.Popen(['scopegrep-server'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
@@ -80,8 +82,9 @@ without Python on `PATH`.
 
 | variable | required | what it does |
 |---|---|---|
-| `SCOPEGREP_URL` | yes | Base URL of the hosted retrieval service you were given. |
-| `SCOPEGREP_TOKEN` | yes* | Your access code. *Not required as an env var if a token file is present (see below). |
+| `SCOPEGREP_URL` | no | Base URL of your scoring service. Defaults to `http://127.0.0.1:8000`, where `python backend/serve.py` listens. |
+| `SCOPEGREP_TOKEN` | if the service has one | The shared token your service checks (always set on Modal). Can live in a token file instead (see below). |
+| `SCOPEGREP_MAX_SCOPE_CHUNKS` | no | Largest scope the client sends, in chunks (default 1400). |
 | `SCOPEGREP_ROOT` | no | Repo root to resolve relative `include=[...]` globs against. Defaults to the current working directory of whatever process launched the server. |
 
 `SCOPEGREP_TOKEN` can also live in a file instead of the environment, so it
@@ -91,11 +94,11 @@ installed into. The env var wins if both are set.
 
 ## Exit / failure behavior
 
-- Missing `SCOPEGREP_URL` or no resolvable token: the server still starts
-  (so `tools/list` works for discovery) but every tool call returns an
-  error explaining what's missing, rather than the process refusing to boot.
-- A `401` from the service (bad or missing token) is surfaced verbatim in
-  the tool's response text — it is not retried or silently swallowed.
+- No service reachable at `SCOPEGREP_URL`: the server still starts (so
+  `tools/list` works for discovery) but every tool call returns an error
+  saying how to start one, rather than the process refusing to boot.
+- A `401` from the service (bad or missing token) is surfaced in the tool's
+  response text — it is not retried or silently swallowed.
 - A cold-start timeout is surfaced as a plain error telling you to run
   `scopegrep-prewarm` first; it is not retried automatically, since a
   retry from inside a tool call would just pay the same cold-start cost
@@ -116,6 +119,6 @@ regardless of which host calls them.
 python3 tests/test_outbound.py
 ```
 
-No network and no hosted service required — this suite only exercises the
+No network and no scoring service required — this suite only exercises the
 outbound-call-site logic, which builds and inspects real local git
 repositories per test case. It does not touch `SCOPEGREP_URL`.

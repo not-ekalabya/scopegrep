@@ -3,8 +3,8 @@ of the working repository.
 
 The agent declares a SCOPE (glob patterns), a QUERY, and a token budget. This
 process reads the matching files, cuts them into path-headed chunks, ships
-them to a hosted scoring service, and returns as many whole ranked chunks as
-the budget allows.
+them to the scoring service (backend/, self-hosted on your own GPU or on
+Modal), and returns as many whole ranked chunks as the budget allows.
 
 Everything expensive is on the other side of the network; everything here is
 file walking, chunking, and caching. Chunks are cached in-process keyed by
@@ -17,12 +17,15 @@ The response is governed by `budget_tokens`, not by k: evidence items are
 included whole or not at all, and anything dropped is reported by location.
 
 Configuration:
-  SCOPEGREP_URL    base URL of the hosted scoring service. Defaults to the
-                  endpoint deployed for this plugin.
+  SCOPEGREP_URL    base URL of your scoring service. Defaults to
+                  http://127.0.0.1:8000, where `python backend/serve.py`
+                  listens; set it to the URL `modal deploy` printed if you
+                  host on Modal. See docs/SELF_HOSTING.md.
   SCOPEGREP_TOKEN  shared secret, sent as X-Scopegrep-Token. Falls back to
                   ~/.config/scopegrep/token, then to .scopegrep_token in the
                   plugin root -- so the secret never has to live in a shell
-                  profile or in the MCP config.
+                  profile or in the MCP config. Optional for a local service
+                  started without one.
   SCOPEGREP_ROOT   repository root to search (default: cwd)
 
 A `.scopegrepignore` file anywhere under the walked root -- same syntax as
@@ -46,7 +49,7 @@ try:                                    # mcp >= 2.0
 except ModuleNotFoundError:             # mcp 1.x, where it was called FastMCP
     from mcp.server.fastmcp import FastMCP as _Server
 
-DEFAULT_URL = "https://gekalabya2010--scopegrep-scopegrep-web.modal.run"
+DEFAULT_URL = "http://127.0.0.1:8000"     # backend/serve.py's default
 TOKEN_FILES = [os.path.expanduser("~/.config/scopegrep/token"),
                # __file__ is src/scopegrep/server.py -- three levels up is the
                # repo root, where .scopegrep_token lives. The rename from
@@ -79,9 +82,13 @@ ROOT = os.path.abspath(os.environ.get("SCOPEGREP_ROOT") or os.getcwd())
 # one chunk per file. The skill's guidance is calibrated to chunks of this size.
 CHUNK_CHARS = 1500
 CHARS_PER_TOKEN = 3.75      # rough estimate for code + JSON payloads
-MAX_CHUNKS = 2000           # service-side hard cap
-SAFE_CHUNKS = 1200          # largest scope this has been exercised against; refuse above this
-HTTP_TIMEOUT = 900.0        # a cold service instance can take a while to become ready
+MAX_CHUNKS = 2000           # chunker stops here; the scope is refused above SAFE_CHUNKS anyway
+# Largest scope sent without complaint. 1,380 chunks (238k tokens) is the
+# largest single-cache scope measured; past ~250k tokens the service shards
+# the scope and chunks in different shards stop attending to each other.
+# A self-hoster with a bigger GPU budget can raise it.
+SAFE_CHUNKS = int(os.environ.get("SCOPEGREP_MAX_SCOPE_CHUNKS", "1400"))
+HTTP_TIMEOUT = 900.0        # a cold start (model load) or a large first encode takes a while
 # A request that outruns the service's synchronous response window gets a
 # redirect to a polling URL instead of an immediate answer, so every call
 # here follows redirects. Without it, the first request of a cold session
@@ -638,14 +645,17 @@ def get_scope(include, exclude, split, chunk_chars, root, max_chunks=MAX_CHUNKS)
 # ----------------------------------------------------------------------- http
 
 def _post(path, body):
-    if not URL or not TOKEN:
-        raise RuntimeError(
-            "scopegrep is not configured: no service token found. Set "
-            "SCOPEGREP_TOKEN, or write it to ~/.config/scopegrep/token "
-            "(see the plugin README, step 2).")
     r = httpx.post(f"{URL}{path}", json=body, timeout=HTTP_TIMEOUT, follow_redirects=True,
-                   headers={"X-Scopegrep-Token": TOKEN})
+                   headers=_headers())
+    if r.status_code == 401:
+        raise RuntimeError(
+            f"the scopegrep service at {URL} wants a token: set SCOPEGREP_TOKEN, "
+            "or write it to ~/.config/scopegrep/token (docs/SELF_HOSTING.md).")
     return r
+
+
+def _headers():
+    return {"X-Scopegrep-Token": TOKEN} if TOKEN else {}
 
 
 DEFAULT_BUDGET_TOKENS = 3000
@@ -807,30 +817,37 @@ def scopegrep_status() -> str:
     become ready; subsequent requests against the same scope are fast."""
     try:
         r = httpx.get(f"{URL}/health", timeout=HTTP_TIMEOUT, follow_redirects=True,
-                      headers={"X-Scopegrep-Token": TOKEN})
+                      headers=_headers())
     except Exception as e:                                  # noqa: BLE001
-        return f"scopegrep service unreachable at {URL or '<unset>'}: {e}"
+        return (f"scopegrep service unreachable at {URL}: {e}\n"
+                "Start one with `python backend/serve.py`, or point SCOPEGREP_URL "
+                "at your Modal deployment (docs/SELF_HOSTING.md).")
     if r.status_code != 200:
         return f"scopegrep /health -> HTTP {r.status_code}: {r.text[:400]}"
     h = r.json()
     lines = [
         f"service:   {URL}",
+        f"model:     {h.get('model', '?')}, read at layer {h.get('exit_layer', '?')}"
+        f" on {h.get('gpu') or h.get('device', '?')}",
         f"instance:  up {h['container_uptime_seconds']}s "
         f"(startup took {h['model_load_seconds']}s); "
-        # A deployment held warm and one that scales to zero answer /health
-        # identically apart from this field, and the difference is the whole
-        # question of whether the next call blocks for a minute or two.
+        # A Modal deployment held warm and one that scales to zero answer
+        # /health identically apart from this field, and the difference is the
+        # whole question of whether the next call blocks for a minute or two.
+        # A local serve.py has neither field: it stays up until you stop it.
         + (f"held warm ({h['min_containers']} container(s) always on)"
            if h.get("min_containers")
-           else f"scales to zero after {h['scaledown_window_seconds']}s idle"),
+           else f"scales to zero after {h['scaledown_window_seconds']}s idle"
+           if "scaledown_window_seconds" in h else "always on (self-hosted)"),
         f"warm scopes ({len(h['cached_scopes'])}):",
     ]
     for s in h["cached_scopes"] or []:
         lines.append(f"  {s['scope_key']}  {s['n_chunks']} chunks, "
-                     f"{s['prefix_tokens']} tokens preprocessed, "
+                     f"{s['prefix_tokens']} tokens cached"
+                     f"{' in %d shards' % s['n_shards'] if s.get('n_shards', 1) > 1 else ''}, "
                      f"{s['n_probes']} queries served")
     if not h["cached_scopes"]:
-        lines.append("  (none -- the next retrieval pays the first-time setup cost)")
+        lines.append("  (none -- the next retrieval encodes its scope first)")
     lines.append(f"local scope cache: {len(_scope_cache)} entry(ies), root={ROOT}")
     return "\n".join(lines)
 
@@ -846,8 +863,8 @@ def scopegrep_scope(include: list[str] | str | None = None,
 
     Free and instant -- it only walks the filesystem. Use it before a first
     retrieval on an unfamiliar repo, or whenever you are unsure whether a
-    glob is too broad. A scope of more than ~2000 chunks is rejected by the
-    service; a scope of a few hundred chunks is where this performs best.
+    glob is too broad. Scopes up to ~1,400 chunks (~240k tokens) are read as
+    one; larger ones are split into shards that cannot see each other.
 
     include: glob patterns to search, e.g. ["src/**/*.py", "*.md"]. A
         directory-prefixed pattern ("pipeline/**") prunes the walk so
@@ -865,9 +882,9 @@ def scopegrep_scope(include: list[str] | str | None = None,
     split: "window" cuts whole files into ~chunk_chars windows (covers the
         whole file; the more general shape). "head" keeps only each file's
         first chunk_chars characters, the best-exercised shape.
-    chunk_chars: target chunk size. 1500 is the default. Going much below
-        ~1000 makes the path header dominate what a short summary of the
-        chunk can capture, which hurts ranking quality.
+    chunk_chars: target chunk size. 1500 is the default and what the
+        localization benchmarks used; much smaller chunks make the path
+        header a large share of every chunk.
     root: directory the walk starts from (default: the project root this
         session was started in). This is the real lever on a monorepo with
         gigabyte-scale sibling directories (benchmark corpora, vendored
@@ -906,10 +923,13 @@ def scopegrep_scope(include: list[str] | str | None = None,
         out += ["", note]
     if entry["note"]:
         out += ["", "WARNING: " + entry["note"]]
-    if len(chunks) > 1200:
-        out.append("WARNING: this scope is larger than what this has been "
-                   "well-exercised against. Result quality past this size "
-                   "is less certain.")
+    if est_tokens > 240_000:
+        out.append("WARNING: at ~250k tokens the service splits a scope into "
+                   "shards, and chunks in different shards cannot attend to "
+                   "each other. Narrow the scope if the answer may span them.")
+    if len(chunks) > SAFE_CHUNKS:
+        out.append(f"WARNING: over {SAFE_CHUNKS} chunks; scopegrep_retrieve "
+                   "will refuse this scope (SCOPEGREP_MAX_SCOPE_CHUNKS).")
     return "\n".join(out)
 
 
@@ -992,8 +1012,9 @@ def scopegrep_retrieve(query: str,
         return (
             f"scope too wide: {len(chunks)} chunks from include="
             f"{inc or ['<everything>']} under {rt}.\n"
-            f"Scopes work best up to ~{SAFE_CHUNKS} chunks, and the "
-            f"service rejects more than {MAX_CHUNKS}.\n"
+            f"This client sends at most {SAFE_CHUNKS} chunks "
+            "(SCOPEGREP_MAX_SCOPE_CHUNKS); larger scopes are sharded by the "
+            "service, and shards cannot see each other.\n"
             "Narrow `include` to one subsystem -- a directory of plausible "
             "files, e.g. ['src/some_subsystem/**/*.py'] rather than ['**/*.py'] -- "
             "and call scopegrep_scope first to see the chunk count before you "
@@ -1023,14 +1044,14 @@ def scopegrep_retrieve(query: str,
             body["chunks"] = chunks
             r = _post("/retrieve", body)
     except Exception as e:                                  # noqa: BLE001
-        return f"scopegrep service call failed ({URL or '<unset>'}): {e}"
+        return f"scopegrep service call failed ({URL}): {e}"
     if r.status_code != 200:
         return f"scopegrep /retrieve -> HTTP {r.status_code}: {r.text[:600]}"
     res = r.json()
     entry["scope_key"] = res["scope_key"]
     wall = time.time() - t0
-    scoring = (res["stage1"].get("index_build_seconds", 0) +
-              res["stage1"]["seconds"] + res["stage2"]["seconds"])
+    sa, fa = res["scope_attention"], res["fine_attention"]
+    scoring = sa["encode_seconds"] + sa["seconds"] + fa["seconds"]
 
     items = []
     for item in res["top_k"]:
@@ -1038,7 +1059,7 @@ def scopegrep_retrieve(query: str,
         loc = f"{m['path']}:{m['start_line']}-{m['end_line']}"
         if m.get("symbol"):
             loc += f"  (inside {m['symbol']})"
-        flag = "" if item["reranked"] else "  [preliminary rank]"
+        flag = "" if item["reranked"] else "  [not re-scored]"
         head = f"--- #{item['rank']+1}  {loc}  rev {m.get('revision','?')[:8]}{flag}"
         text = head if output != "chunks" else head + "\n" + chunks[item["index"]] + "\n"
         items.append({"text": text, "loc": loc, "index": item["index"]})
@@ -1051,11 +1072,13 @@ def scopegrep_retrieve(query: str,
         hdr = [
             f"scopegrep: {len(kept_items)} evidence items, "
             f"~{_SIZE_SLOT} est. tokens "
-            f"of a {budget_tokens:,} budget; scope {len(chunks)} chunks, "
-            f"scored to rank {res['ranking_valid_to_k']} at full resolution",
+            f"of a {budget_tokens:,} budget; scope {len(chunks)} chunks read "
+            f"at full length, top {res['ranking_valid_to_k']} re-scored together",
             f"{wall:.1f}s wall / {scoring:.1f}s scoring"
-            + ("  (the rest was a cold start; the next query is fast)"
-               if wall - scoring > 15 else ""),
+            + (f" (scope {sa['cache']}: {sa['encode_seconds']:.1f}s encoding "
+               f"{sa['reencoded_tokens']:,} tokens; the next query on it is fast)"
+               if sa["cache"] != "warm" else "")
+            + ("  (the rest was a cold start)" if wall - scoring > 15 else ""),
         ]
         if omitted_items:
             shown = [item["loc"] for item in omitted_items[:max_locs]]
@@ -1566,7 +1589,7 @@ def _retrieve_once(entry, chunks, query, k, mode):
             body["chunks"] = chunks
             r = _post("/retrieve", body)
     except Exception as e:                                  # noqa: BLE001
-        return None, f"service call failed ({URL or '<unset>'}): {e}"
+        return None, f"service call failed ({URL}): {e}"
     if r.status_code != 200:
         return None, f"HTTP {r.status_code}: {r.text[:300]}"
     res = r.json()
@@ -1675,7 +1698,7 @@ def scopegrep_multi_retrieve(queries: list[str] | str,
         loc = f"{m['path']}:{m['start_line']}-{m['end_line']}"
         if m.get("symbol"):
             loc += f"  (inside {m['symbol']})"
-        mark = "  [preliminary rank]" if not reranked_at.get(idx) else ""
+        mark = "  [not re-scored]" if not reranked_at.get(idx) else ""
         head = (f"--- #{n}  {loc}  rev {m.get('revision','?')[:8]}  "
                 f"(ranked by {agree[idx]} of {n_q} executed queries, "
                 f"best rank {best_rank[idx]}){mark}")

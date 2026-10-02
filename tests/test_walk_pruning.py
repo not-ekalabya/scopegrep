@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tests for directory pruning in `_walk`.
 
-Run: python3 tests/test_walk_pruning.py      (no pytest, no network, no hosted service)
+Run: python3 tests/test_walk_pruning.py      (no pytest, no network, no scoring service)
 
 Why this exists: `include` used to be applied only to filenames, after
 `os.walk` had already recursed through the entire tree. A caller who scoped

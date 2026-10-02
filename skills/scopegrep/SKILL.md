@@ -135,17 +135,19 @@ Three tools: `scopegrep_status` (is the service reachable and ready),
 are absent, the plugin is not loaded into this session — don't claim a
 retrieval succeeded because this skill is present.
 
-Provide `SCOPEGREP_TOKEN` through the MCP server's environment or
-`~/.config/scopegrep/token`. Never put a secret in the manifest, repository,
-skill, or a reply.
+The service is self-hosted (`backend/`, locally or on Modal). `SCOPEGREP_URL`
+points at it; if it has a token, provide `SCOPEGREP_TOKEN` through the MCP
+server's environment or `~/.config/scopegrep/token`. Never put a secret in the
+manifest, repository, skill, or a reply.
 
-- **The service can go idle and take a while to wake up.** The first call
-  after a period of no use can take a couple of minutes; a retrieval that
-  paid that cost says so in its response.
-- **Repeat queries against the same scope are fast.** Only a new or changed
-  scope pays the slow first cost.
-- Editing any file in the scope invalidates the cached result for it, so the
-  next query against that scope re-processes it.
+- **A Modal deployment can go idle and take a while to wake up.** The first
+  call after a period of no use can take a couple of minutes; a retrieval
+  that paid that cost says so in its response.
+- **Repeat queries against the same scope are fast.** The first query on a
+  scope encodes it once (seconds for a few hundred chunks, about a minute and
+  a half for ~1,400); every later query on it takes about two seconds.
+- Editing a file in the scope re-encodes the scope from the first edited
+  chunk onward, not from scratch.
 
 ## Known limits, stated rather than worked around
 
@@ -153,8 +155,9 @@ skill, or a reply.
   finds the right place on every query.
 - **The ranking model is not the model reading the results**, and cross-model
   agreement, while generally strong, is not identical.
-- **Very large scopes are unsupported.** Scope to a subsystem, not a whole
-  large repository, for both cost and quality reasons.
+- **Very large scopes are split.** Past ~250k tokens (~1,400 chunks) the
+  scope is cut into shards that cannot see each other, so a connection
+  between chunks in different shards is not read. Scope to a subsystem.
 - **Scope excludes some files by policy** and says so in the response:
   gitignored paths (`.gitignore`, `.ignore`, and `.scopegrepignore` — same
   syntax, all honoured together), credential-shaped files, and anything

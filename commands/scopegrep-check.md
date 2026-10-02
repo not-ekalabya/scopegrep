@@ -13,5 +13,7 @@ Check the scopegrep plugin end to end and report what you find:
    `ranking_valid_to_k`, and how many tokens came back as a fraction of the
    scope.
 
-Then state plainly whether the plugin is usable right now, and if not, which
-of the three configuration steps in the plugin README is missing.
+Then state plainly whether the plugin is usable right now, and if not, what
+is missing: a running service (`python backend/serve.py`, or a Modal deploy),
+`SCOPEGREP_URL` pointing at it, or the token it expects. See
+docs/SELF_HOSTING.md.

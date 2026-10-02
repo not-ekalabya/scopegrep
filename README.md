@@ -4,85 +4,82 @@ Find code by describing what it does, not by guessing what it's called.
 
 `scopegrep` is a Claude Code plugin for coding agents. Instead of matching
 keywords, it answers a question in plain language — "where is retry backoff
-configured", "what handles session invalidation" — against a codebase, and
-returns the parts of the code most relevant to that question, along with a
-short note on where else in the codebase those same parts are used.
+configured", "what handles session invalidation" — against a declared part of
+a codebase, and returns the code most relevant to that question, along with
+every other place in the codebase that calls what it returned.
 
-This project is under active development as part of a research project.
-The pilot program below is how it's being validated on real
-codebases; the retrieval method itself, the model behind it, and the full
-result set are part of the submitted research materials rather than this
-public repository — what follows is the headline numbers, stated with their
-real sample sizes, not the methodology behind them.
+It is open source and self-hosted: the scoring service lives in
+[`backend/`](backend/) and runs on your own GPU or on Modal
+([guide](docs/SELF_HOSTING.md)). There is no hosted service and no access
+code.
 
-## Results so far
+## How it works
 
-Two separate measurements, on two different kinds of evidence: a designed
-retrieval-quality benchmark (deterministic, scored directly), and real agent
-runs on previously-unseen open-source bug fixes (stochastic, agent-driven).
+scopegrep is the retriever from the research paper *Attention as Search:
+Where Language Models Decide What Matters in Their Context, and a Retriever
+for Coding Agents Built on It* (Ekalabya Ghosh, 2026). The paper asks how a language model decides what in its
+context matters, and finds that attention works in stages: early layers favour
+chunks that resemble the question, one middle layer is where the question
+shifts attention onto what is actually relevant, and later layers spread
+attention out again. scopegrep reads that middle layer directly. It needs no
+training and no index.
 
-**Completeness — the actual capability claim, and the one with a real
-significance test behind it.** On a same-repo, multi-gold benchmark built
-around the exact failure this tool targets (50 questions across two
-unrelated real codebases, 2-7 real call sites each — a fix that needs
-several call sites of the same function updated together, not just the one
-a keyword search would find): scored on whether retrieval surfaces the
-*definition* — the step that decides whether the rest of the call sites can
-even be found — `scopegrep` reaches 92% by the top 10 results and 100% by
-the top 20. A standard dense-embedding baseline, given the same budget,
-reaches 60% and 74% at the same two points, and still hasn't reached 100%
-even given the top 50. The gap is real, not sampling luck: a 95% confidence
-interval on the difference at the top-20 mark is +14 to +40 percentage
-points, computed by resampling the 50 questions 2,000 times — it does not
-cross zero. (At the very top result only, the dense baseline actually wins,
-36% to 16% — reporting that honestly too; `scopegrep`'s advantage shows up
-once it's allowed a handful of results, not right at rank one.)
+- **Score.** The declared files are split into chunks and placed, at full
+  length, in one prompt followed by the question. A chunk's score is the
+  attention the question pays it at layer 20 of Qwen3.5-9B (averaged over
+  heads and tokens), minus the attention a content-free question ("N/A")
+  pays it. Every chunk is scored under one softmax, so a chunk can raise
+  another's score — a function's caller helps its undescribed helper rank.
+- **Early exit.** Nothing after layer 20 affects the score, so only the first
+  20 decoder layers are loaded: 5.34B of 9.41B parameters, 10.7 GB.
+- **Scope Attention.** The scope does not depend on the question, so it is
+  encoded once into a cache. Each query then runs only its own tokens over
+  the cache, ranks every chunk, and the cache is rolled back exactly. A
+  238,000-token scope (1,380 chunks) encodes in 85 s on one A100 and each
+  query then takes about 2 s. After an edit, the cache is re-encoded from the
+  first changed chunk onward.
+- **Fine Attention.** The top of that ranking, up to 8,000 tokens, is
+  re-scored in a fresh prompt where the candidates compete only with each
+  other.
+- **What else the change touches.** For the symbols the returned chunks
+  define, one `git grep` lists their call sites elsewhere in the repository,
+  so the agent gets the relevant code and what depends on it in one call.
 
-**Cost: 21-43% fewer input tokens billed per task** on real agent runs
-(n=3 repetitions per task), depending on the task. This is the reproducible
-number — a later, independent rerun landed within a point of the original
-measurement.
+## Results
 
-**What we're not claiming.** An earlier version of this page reported an
-accuracy delta — the agent resolves more bugs with the tool wired in than
-without. That number does not survive a fuller pool of the same repeated
-task: real agent-driven bug-fix runs vary enough, run to run, that the
-repetition counts affordable for a project this size (single digits per
-arm) aren't enough to tell a real effect from noise, in either direction.
-We'd rather say that plainly than repeat a number that looked good on a
-first small sample. The completeness result above doesn't have this
-problem — it's a deterministic score over a designed benchmark, not an
-agent's stochastic path through a task, so a much smaller sample size
-actually means something there.
+From the paper. Every retriever ranked the same chunks for the same
+question; the held-out benchmarks were built from repositories and questions
+used nowhere in development, under a preregistration. Intervals are 95%
+paired bootstrap.
 
-On harder, more varied real-world tasks the per-task cost number moves
-around and isn't always a win by itself. That range is a real property of
-running an LLM agent, not noise specific to this tool: the identical task,
-run twice with the identical setup, can bill substantially different token
-totals from one rollout to the next, since a coding agent's path through a
-task (how many turns it takes, what it decides to re-read) isn't fixed.
+| benchmark (held-out) | scopegrep | best 7–8B embedder |
+|---|---|---|
+| code call chains, both hops in top 2 (n=150) | **0.77** | 0.51 (Qwen3-Embedding-8B) |
+| 3–4-hop code chains, every hop in top 10 (n=100) | **0.86** | 0.46 (Qwen3-Embedding-8B) |
+| SWE-bench issue → file, MRR (n=117) | **0.880** | 0.801 (gte-Qwen2-7B) |
+| same issues without identifiers, MRR (n=117) | 0.814 | 0.800 (Qwen3-Embedding-8B), level |
+| HotpotQA bridge, both hops in top 2 (n=200) | 0.71 | 0.65 (e5-mistral-7b), level |
 
-### Why input tokens matter this much
+- **Where it wins:** questions whose answer lies in code connected to, but
+  unlike, the question — the helper a described function calls (+0.26
+  [+0.17, +0.36] at top 2), and more so as chains get longer (+0.40 at
+  3–4 hops).
+- **Where it is level:** when the answer resembles the question (HotpotQA,
+  identifier-free issues), it matches the best embedders. On the 25 hardest
+  development issues it trailed gte-Qwen2-7B (0.77 vs 0.88 MRR).
+- **Agents.** On 34 SWE-bench Verified instances, agents using scopegrep spent
+  0.78× the tokens per episode of the same agent without it (95% CI
+  0.68–0.90) and 0.69× per resolved bug. They resolved 40 of 84 paired
+  episodes against 34 — directionally better, not significant (p = 0.21).
+  They spent less on the same tasks; they did not detectably fix more.
+- **Literal lookups.** When the question names the symbol, `grep` is as good
+  (definition file in the top 10: 98% vs 100% on 1–2 million-token
+  repositories). Send literal lookups to grep.
 
-A coding agent's turn cost is dominated by *input* tokens, not output: every
-turn re-sends the entire prior conversation — every file read, every tool
-result, every previous turn's output — because the model has no memory
-between calls except what's in that resent context. In our measurements, a
-single turn re-sends a median of ~28,500 tokens of prior context. That means
-a tool call that *avoids one extra round trip* — by returning a fact the
-agent would otherwise have had to go ask for separately — is worth far more
-than the tokens that tool call itself returns. A 40-token fact fetched via
-an extra turn costs roughly 700x its own size in re-sent context; the same
-fact folded into a response the agent already needed costs nothing extra.
-This is also why `scopegrep`'s own payload size barely matters: across every
-measured task it's under 0.07% of that task's total billed input — any cost
-difference you see above comes from turns avoided, not payload size.
-
-## Get access
-
-Pilot testing is invite-only right now. Email
-[ekalabya2010@gmail.com](mailto:ekalabya2010@gmail.com) to request an access
-code — include a line about the codebase(s) you'd try it on.
+Limitations, from the paper: all retrieval results use one model
+(Qwen3.5-9B); code benchmarks come from seven Python repositories; scopes
+over ~250k tokens are split into shards that cannot see each other; and the
+cost of re-encoding after edits in real sessions was not measured.
 
 ## Install
 
@@ -97,26 +94,37 @@ or, for the command-line tools only:
 pip install git+https://github.com/not-ekalabya/scopegrep.git
 ```
 
-Either way installs directly from this repository — no separate download
-step.
+## Run the scoring service
 
-## Set up your access code
+The plugin needs a running backend. Pick one ([full guide](docs/SELF_HOSTING.md)):
+
+**Your own GPU** (one CUDA GPU; 24 GB handles scopes up to ~150k tokens):
 
 ```bash
-export SCOPEGREP_URL='<the URL you were given>'
-export SCOPEGREP_TOKEN='<the code you were given>'
+git clone https://github.com/not-ekalabya/scopegrep.git && cd scopegrep
+pip install -r backend/requirements.txt
+python backend/serve.py            # http://127.0.0.1:8000, the client's default
 ```
 
-The plugin reads both from your environment, so your code is never written
-into any file you'd commit. It also works as a persistent local file
-(`~/.config/scopegrep/token` or `.scopegrep_token` in this repo's root) if
-you'd rather not export an environment variable every session.
+**Modal** (scales to zero when idle):
+
+```bash
+TOKEN=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+modal secret create scopegrep-auth SCOPEGREP_TOKEN="$TOKEN"
+modal deploy backend/modal_app.py
+export SCOPEGREP_URL='<the URL modal deploy printed>'
+export SCOPEGREP_TOKEN="$TOKEN"
+```
+
+The token can also live in `~/.config/scopegrep/token` instead of your
+environment. Check the setup with `/scopegrep-check` in Claude Code, or
+`python3 backend/smoke.py`.
 
 ## Documentation
 
 ### Quick start
 
-Once installed and configured, an agent session with the plugin active gains
+Once installed and pointed at a running backend, an agent session with the plugin active gains
 four tools. You don't call these by hand in normal use — the agent decides
 when to use them, guided by [the bundled skill](skills/scopegrep/SKILL.md) —
 but this is what they do:
@@ -162,36 +170,28 @@ scopegrep_retrieve(query="<a description of the bug, or the failing test output>
 
 ### First request may be slow
 
-The underlying service can go idle between uses and take up to a couple of
-minutes to become ready again on the next request. If you're about to give a
-live demo, run `scopegrep-prewarm` (or `./tools/prewarm.sh` if you installed
-as a plugin only) a couple of minutes ahead of time, so that wait happens
-before anyone's watching rather than during.
+The first query on a scope encodes it (seconds for a few hundred chunks,
+about a minute and a half for ~1,400); later queries on it take about two
+seconds. A Modal deployment that has scaled to zero also waits for the model
+to load, a minute or two. Run `scopegrep-prewarm` (or `./tools/prewarm.sh`) a
+couple of minutes ahead of a demo so that wait happens before anyone's
+watching.
 
 ### FAQ
 
-**Does it see my code?** Only the files inside whatever scope you declare
-with `include=[...]`. Nothing outside that scope is read or sent anywhere.
+**Does it see my code?** Only the files inside the scope you declare with
+`include=[...]`, minus gitignored and credential-shaped files. They go only to
+the backend you run.
 
 **Does it modify anything?** No — every tool here is read-only. It never
 edits, writes, or deletes files.
 
-**Why do I need an access code?** The service behind this plugin is hosted,
-not run on your machine, so it needs a way to know which requests are part
-of the pilot. See "Get access" above.
+**Do I need a GPU?** The backend does: one CUDA GPU on your machine, or a
+Modal account. The client runs anywhere.
 
-**What if it's slow or wrong?** Please report it — that feedback is exactly
-what the pilot exists to collect. Email the address above with what you
-asked, what came back, and what you expected instead.
+**What if it's slow or wrong?** Open an issue with what you asked, what came
+back, and what you expected.
 
-## A note on scope
+## License
 
-This repository states what the tool does and the headline numbers behind
-that claim, honestly and with real sample sizes — but it intentionally does
-not describe the retrieval method itself, the underlying model, or hosting
-details, and it doesn't publish the full result set behind "Results so far."
-Those are part of the research submission this project supports, not public
-documentation. What's here is what a pilot tester needs to install, configure,
-and use the tool, and enough evidence to decide whether it's worth trying.
-If you're a judge or reviewer with a reason to see the underlying
-methodology, please reach out to the email above directly.
+MIT.

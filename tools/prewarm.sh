@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 # Force the scoring service to finish starting up before anybody is waiting on it.
 #
-# The service goes idle after a period of no use, so calling /health after
-# that starts it back up -- a couple of minutes in practice. That cost is
-# paid by whoever queries first. On your own machine that is an annoyance;
-# in front of a pilot partner it is the first thing they see, and it is not
-# what the tool costs in steady state.
+# A Modal deployment scales to zero after a period of no use, so calling
+# /health after that starts it back up -- a couple of minutes in practice
+# (the model load). That cost is paid by whoever queries first, and it is not
+# what the tool costs in steady state. A local backend/serve.py stays up and
+# does not need this.
 #
-# Run this at the start of a session, or on a timer during a pilot window.
+# Run this at the start of a session, or on a timer during a demo.
 #
 #   usage: ./tools/prewarm.sh [--watch SECONDS]
 #
-# Needs SCOPEGREP_URL and SCOPEGREP_TOKEN, the same two the MCP server reads.
-# SCOPEGREP_TOKEN falls back to ~/.config/scopegrep/token.
+# Needs SCOPEGREP_URL, and SCOPEGREP_TOKEN if the service has one -- the same
+# two the MCP server reads. SCOPEGREP_TOKEN falls back to
+# ~/.config/scopegrep/token.
 set -uo pipefail
 
 URL="${SCOPEGREP_URL:-}"
@@ -20,8 +21,8 @@ TOKEN="${SCOPEGREP_TOKEN:-}"
 [ -z "$TOKEN" ] && [ -r "$HOME/.config/scopegrep/token" ] &&
   TOKEN=$(tr -d '\n' < "$HOME/.config/scopegrep/token")
 
-if [ -z "$URL" ] || [ -z "$TOKEN" ]; then
-  echo "prewarm: set SCOPEGREP_URL and SCOPEGREP_TOKEN (or write the token to" \
+if [ -z "$URL" ]; then
+  echo "prewarm: set SCOPEGREP_URL (and SCOPEGREP_TOKEN, or write the token to" \
        "~/.config/scopegrep/token)" >&2
   exit 2
 fi
@@ -31,7 +32,7 @@ warm_once() {
   t0=$(date +%s)
   # --max-time must exceed a cold model load or this reports a failure for a
   # service that is working exactly as designed.
-  body=$(curl -sS -L --max-time 900 -H "X-Scopegrep-Token: $TOKEN" \
+  body=$(curl -sS -L --max-time 900 ${TOKEN:+-H "X-Scopegrep-Token: $TOKEN"} \
                -w '\n%{http_code}' "$URL/health" 2>&1)
   t1=$(date +%s)
   code=$(printf '%s' "$body" | tail -1)

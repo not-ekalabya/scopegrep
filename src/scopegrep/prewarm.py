@@ -1,10 +1,10 @@
 """Force the scoring service to finish starting up before anybody is waiting on it.
 
-The service goes idle after a period of no use, so calling `/health` after
-that starts it back up -- a couple of minutes in practice. That cost is paid
-by whoever queries first. On your own machine that is an annoyance; in front
-of a pilot partner it is the first thing they see, and it is not what the
-tool costs in steady state.
+A Modal deployment scales to zero after a period of no use, so calling
+`/health` after that starts it back up -- a couple of minutes in practice
+(the model load). That cost is paid by whoever queries first, and it is not
+what the tool costs in steady state. A local `backend/serve.py` stays up and
+does not need this.
 
 This is the pip-installable twin of `tools/prewarm.sh` -- same behaviour, no
 bash/curl dependency, for anyone who installed the package rather than the
@@ -30,8 +30,8 @@ def _resolve_creds():
     token = os.environ.get("SCOPEGREP_TOKEN", "")
     if not token and os.path.isfile(TOKEN_FILE):
         token = open(TOKEN_FILE, encoding="utf-8").read().strip()
-    if not url or not token:
-        sys.exit("prewarm: set SCOPEGREP_URL and SCOPEGREP_TOKEN (or write the "
+    if not url:
+        sys.exit("prewarm: set SCOPEGREP_URL (and SCOPEGREP_TOKEN, or write the "
                  "token to ~/.config/scopegrep/token)")
     return url.rstrip("/"), token
 
@@ -44,7 +44,7 @@ def warm_once(url, token):
         # timeout must exceed a cold model load or this reports a failure for
         # a service that is working exactly as designed.
         r = httpx.get(f"{url}/health", timeout=900.0, follow_redirects=True,
-                      headers={"X-Scopegrep-Token": token})
+                      headers={"X-Scopegrep-Token": token} if token else {})
     except Exception as e:                                      # noqa: BLE001
         print(f"{_now()}  prewarm FAILED after {time.time()-t0:.0f}s: {e}",
               file=sys.stderr)

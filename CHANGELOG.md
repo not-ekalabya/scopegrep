@@ -2,6 +2,27 @@
 
 User-visible changes to the scopegrep plugin. Dates are Asia/Kolkata (IST).
 
+## 0.4.0 — 2026-10-02
+
+- **Open source and self-hosted.** The scoring service is now in this
+  repository (`backend/`) and runs on your own GPU (`python backend/serve.py`)
+  or on Modal (`modal deploy backend/modal_app.py`); see
+  [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md). The hosted endpoint and the
+  invite-only pilot program are discontinued, and there are no access codes.
+- **The paper's method.** The service now scores with Qwen3.5-9B read at
+  layer 20 and truncated there, minus an "N/A" baseline readout, over the
+  whole scope at full length (Scope Attention, cached once per scope), with
+  Fine Attention re-scoring the top 8,000 tokens. It replaces the two-pass
+  scorer that ranked 32-token excerpts of each chunk before re-scoring the
+  top. Scopes over 250k tokens are sharded; an edited scope is re-encoded
+  from the first changed chunk instead of from scratch.
+- The client defaults to `http://127.0.0.1:8000`, sends a token only when one
+  is configured, and accepts scopes up to 1,400 chunks
+  (`SCOPEGREP_MAX_SCOPE_CHUNKS`). Results not re-scored by Fine Attention are
+  marked `[not re-scored]` (was `[preliminary rank]`).
+- README: the method and the paper's held-out results replace the earlier
+  headline numbers, which were measured on the previous scorer.
+
 ## 0.3.9 — 2026-09-18
 
 - `_walk` now prunes `os.walk` descent by `include`, instead of walking the
